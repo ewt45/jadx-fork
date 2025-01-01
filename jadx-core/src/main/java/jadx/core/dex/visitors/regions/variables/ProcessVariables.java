@@ -187,6 +187,10 @@ public class ProcessVariables extends AbstractVisitor {
 	}
 
 	private void declareVar(MethodNode mth, CodeVar codeVar, List<VarUsage> usageList) {
+		if (mth.getName().contains("getView")) {
+			int i=0;
+		}
+
 		if (codeVar.isDeclared()) {
 			return;
 		}
@@ -331,6 +335,7 @@ public class ProcessVariables extends AbstractVisitor {
 			return false;
 		}
 		parentInsn.add(AFlag.DECLARE_VAR);
+		// parentInsn.remove(AFlag.DONT_GENERATE); //这样会有副作用吗
 		return true;
 	}
 

@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import jadx.core.Consts;
 import jadx.core.clsp.ClspClass;
 import jadx.core.dex.attributes.AFlag;
+import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.instructions.ArithNode;
 import jadx.core.dex.instructions.BaseInvokeNode;
 import jadx.core.dex.instructions.IndexInsnNode;
@@ -24,6 +25,7 @@ import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.instructions.args.PrimitiveType;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.instructions.args.SSAVar;
+import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.IMethodDetails;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
@@ -334,29 +336,43 @@ public final class TypeUpdate {
 
 	private TypeUpdateResult invokeListener(TypeUpdateInfo updateInfo, InsnNode insn, InsnArg arg, ArgType candidateType) {
 		BaseInvokeNode invoke = (BaseInvokeNode) insn;
-		if (isAssign(invoke, arg)) {
+		if (isAssign(invoke, arg)) {//insn.result=r0v0, arg=r2v0, false
 			// TODO: implement backward type propagation (from result to instance)
 			return SAME;
-		}
-		if (invoke.getInstanceArg() == arg) {
+		} //candidateType: "test.Class1<AB extends test.MultiBase<AB>>"
+		if (invoke.getInstanceArg() == arg) {//true
 			IMethodDetails methodDetails = root.getMethodUtils().getMethodDetails(invoke);
-			if (methodDetails == null) {
+			if (methodDetails == null) {//"test.Parent.get():T extends test.MultiBase<T>"
 				return SAME;
 			}
 			TypeUtils typeUtils = root.getTypeUtils();
-			Set<ArgType> knownTypeVars = typeUtils.getKnownTypeVarsAtMethod(updateInfo.getMth());
-			Map<ArgType, ArgType> typeVarsMap = typeUtils.getTypeVariablesMapping(candidateType);
+			Set<ArgType> knownTypeVars = typeUtils.getKnownTypeVarsAtMethod(updateInfo.getMth());//"AB extends test.MultiBase<AB>"
+			if (invoke.toString().contains("0x0000: INVOKE (r0v0")) {
+				RegisterArg resultArg = invoke.getResult();
+				if (resultArg!=null && resultArg.toString().contains("(r0v0 ?? I:test.MultiBase)")){
+					int i=0; //看看map为啥放入的是AB而不是T
+				}
+			}
+			//错误的 candidataType 是子类（AB）,导致map是AB，而returnType是父类函数返回值 T
+			Map<ArgType, ArgType> typeVarsMap = typeUtils.getTypeVariablesMapping(candidateType);//只有1个 kv都是ArgType$GenericType@259 "AB extends test.MultiBase<AB>"
 
-			ArgType returnType = methodDetails.getReturnType();
-			List<ArgType> argTypes = methodDetails.getArgTypes();
-			int argsCount = argTypes.size();
-			if (typeVarsMap.isEmpty()) {
+			ArgType returnType = methodDetails.getReturnType();//"T extends test.MultiBase<T>"
+			
+			// 1. returnType是泛型（GenericType,GenericObject,OuterGenericObject这么多种？？）
+			// 2. 函数所属类是candidateType的父类
+			// 3. 子类泛型填充进父类泛型
+			// 满足以上条件，泛型替换为candidateType的泛型类型（每种替换方式都不一样？！）
+			
+			
+			List<ArgType> argTypes = methodDetails.getArgTypes();//空
+			int argsCount = argTypes.size();//0
+			if (typeVarsMap.isEmpty()) {//false 有1项
 				// generics can't be resolved => use as is
 				return applyInvokeTypes(updateInfo, invoke, argsCount, knownTypeVars, () -> returnType, argTypes::get);
 			}
-			// resolve types before apply
+			// resolve types before apply //走到这里
 			return applyInvokeTypes(updateInfo, invoke, argsCount, knownTypeVars,
-					() -> typeUtils.replaceTypeVariablesUsingMap(returnType, typeVarsMap),
+					() ->  typeUtils.replaceTypeVariablesUsingMap(returnType, typeVarsMap),
 					argNum -> typeUtils.replaceClassGenerics(candidateType, argTypes.get(argNum)));
 		}
 		return SAME;
@@ -365,11 +381,15 @@ public final class TypeUpdate {
 	private TypeUpdateResult applyInvokeTypes(TypeUpdateInfo updateInfo, BaseInvokeNode invoke, int argsCount,
 			Set<ArgType> knownTypeVars, Supplier<ArgType> getReturnType, Function<Integer, ArgType> getArgType) {
 		boolean allSame = true;
-		RegisterArg resultArg = invoke.getResult();
-		if (resultArg != null && !resultArg.isTypeImmutable()) {
-			ArgType returnType = checkType(knownTypeVars, getReturnType.get());
+		RegisterArg resultArg = invoke.getResult();//"(r0v0 ?? I:test.MultiBase)"
+		if (invoke.toString().contains("0x0000: INVOKE (r0v0")
+		&& resultArg.toString().contains("(r0v0 ?? I:com.eltechs.axs.applicationState.ApplicationStateBase)")) { //"(r0v0 ?? I:test.MultiBase)"
+			int i=0;
+		}
+		if (resultArg != null && !resultArg.isTypeImmutable()) {//true
+			ArgType returnType = checkType(knownTypeVars, getReturnType.get());//.get()和返回值都是 "T extends test.MultiBase<T>" //错误时这2个都是null
 			if (returnType != null) {
-				TypeUpdateResult result = updateTypeChecked(updateInfo, resultArg, returnType);
+				TypeUpdateResult result = updateTypeChecked(updateInfo, resultArg, returnType);//这个执行完之后map就多了4个r0v0
 				if (result == REJECT) {
 					TypeCompareEnum compare = comparator.compareTypes(returnType, resultArg.getType());
 					if (compare.isWider()) {

@@ -1,8 +1,13 @@
 package jadx.core.dex.instructions.args;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+
+import org.jetbrains.annotations.Nullable;
 
 import jadx.api.metadata.annotations.VarNode;
 
@@ -17,6 +22,9 @@ public class CodeVar {
 
 	private VarNode cachedVarNode; // set and used at codegen stage
 
+	public CodeVar() {
+		addStrace(this.typeSetAt);
+	}
 	public static CodeVar fromMthArg(RegisterArg mthArg, boolean linkRegister) {
 		CodeVar var = new CodeVar();
 		var.setType(mthArg.getInitType());
@@ -42,8 +50,19 @@ public class CodeVar {
 		return type;
 	}
 
+	public List<String> typeSetAt = new ArrayList<>();
 	public void setType(ArgType type) {
 		this.type = type;
+		addStrace(typeSetAt, "设置类型为", type.toString());
+	}
+	public static void addStrace(List<String> list, String... strs) {
+		try (StringWriter sw = new StringWriter();
+			PrintWriter pw = new PrintWriter(sw)) {
+			new RuntimeException().printStackTrace(pw);
+			list.add(Arrays.toString(strs)+'\n' + sw.toString());
+		} catch (Exception e) {
+			list.add("出错，提取字符串失败");
+		}
 	}
 
 	public List<SSAVar> getSsaVars() {

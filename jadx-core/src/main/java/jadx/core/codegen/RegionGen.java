@@ -90,6 +90,9 @@ public class RegionGen extends InsnGen {
 		}
 
 		for (InsnNode insn : block.getInstructions()) {
+			if (insn.toString().contains("0x0015: CONST (r0v0 boolean) = false")) {
+				int i=0; //找到未显示的那条赋值语句
+			}
 			if (!insn.contains(AFlag.DONT_GENERATE)) {
 				makeInsn(insn, code);
 			}

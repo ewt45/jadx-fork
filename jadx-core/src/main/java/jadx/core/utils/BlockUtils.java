@@ -766,13 +766,24 @@ public class BlockUtils {
 	@Nullable
 	public static BlockNode getPathCross(MethodNode mth, Collection<BlockNode> blocks) {
 		BitSet domFrontBS = newBlocksBitSet(mth);
+		//循环时存储 domFrontier | 自身id
+		BitSet tmpBS = newBlocksBitSet(mth);
 		boolean first = true;
+		//把起始块本身加进去？
+		//b1: 2:{8}
+		//b2: 8:{4}
+		//b3: 3:{8}
 		for (BlockNode b : blocks) {
+			tmpBS.clear();
+			tmpBS.set(b.getId());
+			tmpBS.or(b.getDomFrontier());
 			if (first) {
-				domFrontBS.or(b.getDomFrontier());
+				domFrontBS.or(tmpBS);
+				// domFrontBS.or(b.getDomFrontier());
 				first = false;
 			} else {
-				domFrontBS.and(b.getDomFrontier());
+				domFrontBS.and(tmpBS);
+				// domFrontBS.and(b.getDomFrontier());
 			}
 		}
 		domFrontBS.clear(mth.getExitBlock().getId());
@@ -805,7 +816,11 @@ public class BlockUtils {
 				BitSet domFrontier = block.getDomFrontier();
 				if (!domFrontier.isEmpty()) {
 					combinedDF.or(domFrontier);
-					combinedDF.clear(block.getId());
+					//block自身可以作为交叉点后，这里也应该避免错误清除block自身
+					//未遍历id应该单独放一个bitset里而不是再混用同一个，否则没法知道这个是or留下来的还是已遍历到的节点
+					//不对，while循环一次，会将domFrontBS中的每个块都往下走一个块。而且
+					//combinedDF是从空开始的，也就是说所有添加进去的都不应该被清空啊？？
+					// combinedDF.clear(block.getId());
 				}
 			});
 			combinedDF.andNot(excluded);
@@ -833,12 +848,14 @@ public class BlockUtils {
 			mth.addDebugComment("Null handler block in: " + handler);
 			return;
 		}
-		BitSet domFrontier = handlerBlock.getDomFrontier();
-		if (domFrontier == null) {
-			mth.addDebugComment("Null dom frontier in handler: " + handler);
-			return;
-		}
-		set.or(domFrontier);
+		//为什么用handlerBlock的domFrontier而不是自身？？？？
+		set.set(handlerBlock.getId());
+		// BitSet domFrontier = handlerBlock.getDomFrontier();
+		// if (domFrontier == null) {
+		// 	mth.addDebugComment("Null dom frontier in handler: " + handler);
+		// 	return;
+		// }
+		// set.or(domFrontier);
 	}
 
 	public static BlockNode getPathCross(MethodNode mth, BlockNode b1, BlockNode b2) {

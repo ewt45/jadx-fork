@@ -86,18 +86,41 @@ public class ClassModifier extends AbstractVisitor {
 					ClassInfo clsInfo = ClassInfo.fromType(cls.root(), fldType);
 					ClassNode fieldsCls = cls.root().resolveClass(clsInfo);
 					ClassInfo parentClass = cls.getClassInfo().getParentClass();
-					if (fieldsCls != null
-							&& (inline || Objects.equals(parentClass, fieldsCls.getClassInfo()))) {
+					//传入参数 cls 是匿名类的节点
+					//不对，虽然父类和成员变量所属类不是同一个，但是inline开启了，所以这里也会进入。
+					//不读取Container.smali时不会生成Container类的节点，所以fieldsCls为null不会进入这里
+					//然后不开 内联匿名类 选项的话也不会进入这里
+					// 这个逻辑不对吧, 只有变量为父类实例时才应该是this，inline的话不一定
+					if (fieldsCls == null) {
+						continue;
+					}
+					//为什么测试样例这里parentClass是null呢？导致这个为false了
+					boolean isParentInst = Objects.equals(parentClass, fieldsCls.getClassInfo());
+					if (inline || isParentInst) {
 						int found = 0;
 						for (MethodNode mth : cls.getMethods()) {
 							if (removeFieldUsageFromConstructor(mth, field, fieldsCls)) {
 								found++;
 							}
 						}
+						// 这里也加上变量所属类和父类是否相同的判断
+						// 但是这个found!=0代表上面removeFieldUsageFromConstructor执行成功了，
+						// 再检查一下，如果不是父类实例时，remove函数执行成功是否合理吧？也可能是需要该remove函数
+						// 而不是改这里的判断条件 （remove执行成功合理）
+						//（再编写个测试用例，匿名类的成员变量是在匿名类内部新建的时候，会不会正确被保留）
+						// 只有当field是父类实例时，才添加class_instance replaceAttr,
+						// 但是只要移除了field在构造函数中的使用，这个field就应该不显示，所以dont_generate不受isParentInst限制
 						if (found != 0) {
-							field.addAttr(new FieldReplaceAttr(fieldsCls.getClassInfo()));
+							if (isParentInst) {
+								field.addAttr(new FieldReplaceAttr(fieldsCls.getClassInfo()));
+							}
 							field.add(AFlag.DONT_GENERATE);
 						}
+						//在此之前有个AnonymousClassVisitor可能addttr var的replace了，看一下
+						//确实是有var的，但是只能存在一个所以这里添加class replace后就顶掉了
+						System.out.println("当前成员变量："+field + ", 包含的attr(添加class之后):"+ field.getAttributesString());
+						System.out.println(String.format("变量所属类应该是Container，父类应该是AutowiringEnhancedObject。" +
+						"实际情况是 found = %d, 内部类 = %s, 变量类 = %s, 父类 = %s", found, cls.getClassInfo(), fieldsCls.getClassInfo(), parentClass));
 					}
 				}
 			}

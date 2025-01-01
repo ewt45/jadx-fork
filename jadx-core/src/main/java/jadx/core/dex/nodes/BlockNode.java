@@ -10,6 +10,7 @@ import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.AttrNode;
 import jadx.core.dex.attributes.nodes.LoopInfo;
+import jadx.core.dex.instructions.args.CodeVar;
 import jadx.core.utils.BlockUtils;
 import jadx.core.utils.EmptyBitSet;
 import jadx.core.utils.InsnUtils;
@@ -75,6 +76,7 @@ public final class BlockNode extends AttrNode implements IBlock, Comparable<Bloc
 		this.cid = cid;
 		this.id = id;
 		this.startOffset = offset;
+		CodeVar.addStrace(addedPlaces, "构造函数调用在");
 	}
 
 	public int getCId() {

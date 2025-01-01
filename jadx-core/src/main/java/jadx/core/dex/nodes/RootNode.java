@@ -290,7 +290,9 @@ public class RootNode {
 		List<ClassNode> updated = new ArrayList<>();
 		for (ClassNode cls : inner) {
 			ClassInfo clsInfo = cls.getClassInfo();
-			ClassNode parent = resolveClass(clsInfo.getParentClass());
+			//如果在resolveClass里改，那么最后改到ClassInfo的时候，它是先用错误方式处理父类，再给父类赋值正确的名
+			// Update parentcls name more precisely (initially inner class `clz$mth$1`
+			ClassNode parent = resolveParentClass(clsInfo);
 			if (parent == null) {
 				clsMap.remove(clsInfo);
 				clsInfo.notInner(this);
@@ -481,7 +483,53 @@ public class RootNode {
 	public ClassNode resolveRawClass(String rawFullName) {
 		return rawClsMap.get(rawFullName);
 	}
-
+	
+	// will recognize `clz$mth` as parent class, which should actually be `clz`)
+	// ClassNode parent = resolveClass(clsInfo.getParentClass());
+	// 但是这样也有问题，比如同时存在两个java类A.java, A$B.java，
+	// A$B.mth()中有一个匿名类，转为smali后名字叫A$B$mth$1
+	// 如果简单地去掉末尾$*作为父类，假设A$B.smali丢失，那么匿名类就会把A当作是自己父类
+	// 应该再只去掉一层，然后做一下函数名对比，
+	// 遭了，还有两个$$的。。。
+	/**
+	 * Find and correct the parent of an inner class. 
+	 * <br>
+	 * Sometimes inner ClassInfo initiated the wrong parent info. 
+	 * e.g. inner is `Cls$mth$1`, current parent = `Cls$mth`, real parent = `Cls`
+	 */
+	@Nullable
+	public ClassNode resolveParentClass(ClassInfo clsInfo) {
+		ClassInfo parentInfo = clsInfo.getParentClass();
+		ClassNode parentNode = resolveClass(parentInfo);
+		if (parentNode == null && parentInfo != null) {
+			// case is inner = `cls$mth$1`, current parent = `cls$mth`, real parent = `cls`
+			System.out.println("父类不存在，尝试寻找一个存在的 inner="+clsInfo +", parent="+parentInfo);
+			String parClsName = parentInfo.getFullName();
+			int sep = parClsName.lastIndexOf('.');
+			if (sep > 0 && sep != parClsName.length() - 1) {
+				String mthName = parClsName.substring(sep + 1);
+				String upperParClsName = parClsName.substring(0, sep);
+				// 某些内部类的分隔符是两个$$
+				// （似乎只出现在最后一处，倒数第二处往前都是一个$了，要不放到ClassInfo里处理吧）
+				// if (upperParClsName.endsWith("$")) {
+				// 	upperParClsName = parClsName.substring(0, sep - 1);
+				// }
+				ClassNode tmpParent = resolveClass(upperParClsName);
+				if (tmpParent != null && tmpParent.searchMethodByShortName(mthName) != null) {
+					System.out.println("修正了内部类的父类："+clsInfo + ", "+tmpParent.getClassInfo());
+					System.out.println(String.format("set inner class '%s' parent as '%s'", clsInfo, tmpParent));
+					parentNode = tmpParent;
+					clsInfo.convertToInner(parentNode);
+				} else {
+					System.out.println("未修正父类，为什么？tmpParentNode="+tmpParent+
+						", mthName="+mthName);
+				}
+			} else {
+				System.out.println("？？？为什么找不到$啊？？？sep="+sep+", parClsName="+parClsName);
+			}
+		}
+		return parentNode;
+	}
 	/**
 	 * Searches for ClassNode by its full name (original or alias name)
 	 * <br>

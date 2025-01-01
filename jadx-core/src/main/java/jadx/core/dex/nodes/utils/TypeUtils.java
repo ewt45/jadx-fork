@@ -210,23 +210,34 @@ public class TypeUtils {
 		if (!clsType.isGeneric()) {
 			return Collections.emptyMap();
 		}
+		//要不要在这里把父类泛型也作为key添加到map里，这样后面就能获取到了
+		//考虑一下实际情况，子类为<A extends List<String>> 父类为 <B extends List<Integer>> 这样不行
+		// 子类为<A extends List<String>> 父类为 <B extends List> 这样可以看作是同一个。
+		// 也就是说 子类泛型填充进父类泛型，且子类泛型是父类泛型的子集的时候，父类泛型应该也作为map的key
 		List<ArgType> typeParameters = root.getTypeUtils().getClassGenerics(clsType);
-		if (typeParameters.isEmpty()) {
+		//向typeParameters中再尝试添加元素
+
+
+		if (typeParameters.isEmpty()) {//"T extends test.MultiBase<T>"
 			return Collections.emptyMap();
 		}
 		List<ArgType> actualTypes = clsType.getGenericTypes();
-		if (isEmpty(actualTypes)) {
+		if (isEmpty(actualTypes)) {//"T extends test.MultiBase<T>"
 			return Collections.emptyMap();
 		}
 		int genericParamsCount = actualTypes.size();
-		if (genericParamsCount != typeParameters.size()) {
+		if (genericParamsCount != typeParameters.size()) {//都是1
 			return Collections.emptyMap();
 		}
 		Map<ArgType, ArgType> replaceMap = new HashMap<>(genericParamsCount);
 		for (int i = 0; i < genericParamsCount; i++) {
 			ArgType actualType = actualTypes.get(i);
 			ArgType typeVar = typeParameters.get(i);
-			replaceMap.put(typeVar, actualType);
+			if (typeVar.getExtendTypes() != null) {
+				// force short form (only type var name)
+				typeVar = ArgType.genericType(typeVar.getObject());
+			}
+			replaceMap.put(typeVar, actualType);// 俩都是一样的 "T extends test.MultiBase<T>"
 		}
 		return replaceMap;
 	}
@@ -283,7 +294,10 @@ public class TypeUtils {
 		if (replaceMap.isEmpty()) {
 			return null;
 		}
+		//知道了，replaceType是"T extends test.MultiBase<T>"
+		//而map的kv都是 ArgType$GenericType@236 "AB extends test.MultiBase<AB>"
 		if (replaceType.isGenericType()) {
+			// replaceMap.keySet().stream().filter(...);
 			return replaceMap.get(replaceType);
 		}
 		if (replaceType.isArray()) {

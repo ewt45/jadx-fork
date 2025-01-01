@@ -55,13 +55,15 @@ final class IfRegionMaker {
 		if (currentIf == null) {
 			return null;
 		}
-		IfInfo mergedIf = mergeNestedIfNodes(currentIf);
+		//为什么为null就一定要反转呢？？
+		IfInfo mergedIf = mergeNestedIfNodes(currentIf);//为null了。确实也没有子if
 		if (mergedIf != null) {
 			currentIf = mergedIf;
 		} else {
 			// invert simple condition (compiler often do it)
 			currentIf = IfInfo.invert(currentIf);
-		}
+		} 
+		// restructureIf里面badElse了导致置null被放到if外面
 		IfInfo modifiedIf = restructureIf(mth, block, currentIf);
 		if (modifiedIf != null) {
 			currentIf = modifiedIf;
@@ -77,6 +79,7 @@ final class IfRegionMaker {
 			}
 		}
 		confirmMerge(currentIf);
+		//这一顿操作下来本来else的置null被放外面了。后面还能被放回来？还是压根不应该放外面
 
 		IfRegion ifRegion = new IfRegion(currentRegion);
 		ifRegion.updateCondition(currentIf);
@@ -174,11 +177,17 @@ final class IfRegionMaker {
 		}
 
 		// select 'then', 'else' and 'exit' blocks
-		if (thenBlock.contains(AFlag.RETURN) && elseBlock.contains(AFlag.RETURN)) {
+ 		if (thenBlock.contains(AFlag.RETURN) && elseBlock.contains(AFlag.RETURN)) {
 			info.setOutBlock(null);
 			return info;
 		}
-		boolean badThen = isBadBranchBlock(info, thenBlock);
+
+		//先设置一下
+		info.setOutBlock(BlockUtils.getPathCross(mth, thenBlock, elseBlock));
+		
+
+		boolean badThen = isBadBranchBlock(info, thenBlock);//false
+		//true elseBlock是viewFacade置null，其被调用处一个是这里的if的else，另一个是then里的catch块，不知为何then里没有trycatch块，导致catch块那个调用处被认为是if之外的地方了，因此这里为true
 		boolean badElse = isBadBranchBlock(info, elseBlock);
 		if (badThen && badElse) {
 			if (Consts.DEBUG_RESTRUCTURE) {
@@ -219,21 +228,57 @@ final class IfRegionMaker {
 				}
 			}
 		}
+		//此函数之前设置好outBlock，这里直接比较分支是否是out。但是必须要out存在 比较结果才是正确的
+		if (info.getOutBlock() != null) {
+			return block == info.getOutBlock();
+		}
 		return !allPathsFromIf(block, info);
 	}
 
+
 	private static boolean allPathsFromIf(BlockNode block, IfInfo info) {
+
+		// 作为out的else块。它应该是then的结尾的下一句。但是pathCross为null，因为
+		// 从else和then的下一句的id（dominateFrontier)开始比较，而忽略了else本身。换句话说，如果else本身id作为
+		// bitset，和then的下一句的bidset开始比较，而得出的block是else本身，那就说明else应该为out
+
+
 		List<BlockNode> preds = block.getPredecessors();
 		List<BlockNode> ifBlocks = info.getMergedBlocks();
 		for (BlockNode pred : preds) {
 			if (pred.contains(AFlag.LOOP_END)) {
 				// ignore loop back edge
 				continue;
-			}
+			} 
 			BlockNode top = BlockUtils.skipSyntheticPredecessor(pred);
 			if (!ifBlocks.contains(top)) {
 				return false;
 			}
+
+			
+
+			// //如果不存在，需要判断是否一定从if开头能走到
+			// for (BlockNode ifBlock : ifBlocks) {
+			// 	if (ifBlock != top && top.isDominator(ifBlock)) {
+			// 		return false;
+			// 	}
+			// }
+			
+			// //如果来自catch的那个，父块可能追溯到if吗？用父块比较？
+			// boolean contained = false;
+			// do {
+			// 	if (ifBlocks.contains(top)) {
+			// 		contained = true;
+			// 		break;
+			// 	} else if (top.getPredecessors().size() > 0) {
+			// 		top = top.getPredecessors().get(0);
+			// 	} else {
+			// 		break;
+			// 	}
+			// } while (top.getPredecessors().size() > 0);
+			// if (!contained) {
+			// 	return false;
+			// }
 		}
 		return true;
 	}
@@ -257,7 +302,7 @@ final class IfRegionMaker {
 			if (nextIf != null) {
 				followThenBranch = false;
 			} else {
-				return null;
+				return null;//then和else的getNextIf都是null，这里直接返回了。好像也没什么问题 if里也确实没有子if
 			}
 		}
 

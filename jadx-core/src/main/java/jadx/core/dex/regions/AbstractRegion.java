@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jadx.core.dex.attributes.AttrNode;
+import jadx.core.dex.instructions.args.CodeVar;
 import jadx.core.dex.nodes.IContainer;
 import jadx.core.dex.nodes.IRegion;
 
@@ -14,6 +15,7 @@ public abstract class AbstractRegion extends AttrNode implements IRegion {
 
 	public AbstractRegion(IRegion parent) {
 		this.parent = parent;
+		CodeVar.addStrace(addedPlaces, "构造函数调用在：");
 	}
 
 	@Override

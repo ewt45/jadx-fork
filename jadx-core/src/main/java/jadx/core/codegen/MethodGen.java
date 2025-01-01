@@ -294,6 +294,7 @@ public class MethodGen {
 	public void addRegionInsns(ICodeWriter code) throws CodegenException {
 		try {
 			RegionGen regionGen = new RegionGen(this);
+			//定位到某一函数 可以查看其全部指令. 可以从code查看已转换的java代码
 			regionGen.makeRegion(code, mth.getRegion());
 		} catch (StackOverflowError | BootstrapMethodError e) {
 			mth.addError("Method code generation error", new JadxOverflowException("StackOverflow"));

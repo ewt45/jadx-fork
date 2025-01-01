@@ -278,6 +278,13 @@ public class InsnGen {
 	private static final Set<Flags> BODY_ONLY_NOWRAP_FLAGS = EnumSet.of(Flags.BODY_ONLY_NOWRAP);
 
 	protected void makeInsn(InsnNode insn, ICodeWriter code, Flags flag) throws CodegenException {
+		if (this.mth.toString().contains("test.Class1.onCreate(android.os.Bundle):void")
+			&& insn.toString().contains("0x0000: INVOKE (r0v0")) { // ?? I:test.MultiBase) = (r2v0 'this' test.Class1<AB extends test.MultiBase<AB>> A[IMMUTABLE_TYPE, THIS]) VIRTUAL call: test.Class1.get():test.MultiBase A[DECLARE_VAR, MD:():T extends test.MultiBase<T> (m)]
+			int i=0; //找到未显示的那条赋值语句
+			//找到codevar，看看type在哪设置的
+			//CodeVar codeVar = insn.getResult().getSVar().getCodeVar();
+		}
+
 		if (insn.getType() == InsnType.REGION_ARG) {
 			return;
 		}

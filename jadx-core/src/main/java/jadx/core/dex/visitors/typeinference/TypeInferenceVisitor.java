@@ -105,6 +105,11 @@ public final class TypeInferenceVisitor extends AbstractVisitor {
 	private void setImmutableType(MethodNode mth, SSAVar ssaVar) {
 		try {
 			ArgType immutableType = ssaVar.getImmutableType();
+			if (mth.toString().contains("test():void")) {
+				int i=0;//String name = ssaVar.toString(); //正确显示的版本这里也是null。而且类型已经能正确显示了. 难道是之前设置的吗
+				//正确 SSAVar@114 "r0v0 T extends test.MultiBase<T>"
+				//错误 SSAVar@98 "r0v0 ??"
+			}
 			if (immutableType != null) {
 				TypeUpdateResult result = typeUpdate.applyWithWiderIgnSame(mth, ssaVar, immutableType);
 				if (Consts.DEBUG_TYPE_INFERENCE && result == TypeUpdateResult.REJECT) {
@@ -273,6 +278,10 @@ public final class TypeInferenceVisitor extends AbstractVisitor {
 	}
 
 	private ITypeBound makeAssignInvokeBound(InvokeNode invokeNode) {
+		if (invokeNode.getCallMth().toString()
+		.contains("test.Test2.Class2.get():test.Test2$I1")) {
+			int i=0;
+		}
 		ArgType boundType = invokeNode.getCallMth().getReturnType();
 		ArgType genericReturnType = root.getMethodUtils().getMethodGenericReturnType(invokeNode);
 		if (genericReturnType != null) {

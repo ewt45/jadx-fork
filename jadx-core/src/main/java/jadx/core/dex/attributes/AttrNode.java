@@ -1,5 +1,9 @@
 package jadx.core.dex.attributes;
 
+import java.io.PrintStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.util.ArrayList;
 import java.util.List;
 
 import jadx.api.CommentsLevel;
@@ -16,8 +20,21 @@ public abstract class AttrNode implements IAttributeNode {
 
 	private AttributeStorage storage = EMPTY_ATTR_STORAGE;
 
+	public List<String> addedPlaces = new ArrayList<>();
+
+	protected void addStrace() {
+		try (StringWriter sw = new StringWriter();
+		PrintWriter pw = new PrintWriter(sw)) {
+			new RuntimeException().printStackTrace(pw);
+			addedPlaces.add(sw.toString());
+		} catch (Exception e) {
+			addedPlaces.add("出错，提取字符串失败");
+		}
+	}
+
 	@Override
 	public void add(AFlag flag) {
+		if (flag == AFlag.DONT_GENERATE) addStrace();
 		initStorage().add(flag);
 		if (Consts.DEBUG_ATTRIBUTES) {
 			addDebugComment("Add flag " + flag + " at " + Utils.currentStackTrace(2));
