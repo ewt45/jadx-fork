@@ -67,7 +67,7 @@ public class ExcHandlersRegionMaker {
 						continue;
 					}
 					BlockNode ss = s.get(0);
-					BlockNode cross = BlockUtils.getPathCross(mth, ss, handler);
+					BlockNode cross = BlockUtils.getPathCross(mth, ss, BlockUtils.getNextBlock(handler)); // ss = try 开头, handler = catch 开头。
 					if (cross != null && cross != ss && cross != handler) {
 						exits.add(cross);
 					}

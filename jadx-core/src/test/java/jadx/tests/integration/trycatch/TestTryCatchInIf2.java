@@ -1,38 +1,14 @@
 package jadx.tests.integration.trycatch;
 
+import org.junit.jupiter.api.Test;
+
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
-import java.security.ProviderException;
-import java.time.DateTimeException;
-
-import org.junit.jupiter.api.Test;
 
 import jadx.tests.api.IntegrationTest;
 
-import static jadx.tests.api.utils.assertj.JadxAssertions.assertThat;
-
-public class TestTryCatchMultiException extends IntegrationTest {
-
-	public static class TestCls {
-		public void test() {
-			try {
-				System.out.println("Test");
-			} catch (ProviderException | DateTimeException e) {
-				throw new RuntimeException(e);
-			}
-		}
-	}
-
-	@Test
-	public void test() {
-		noDebugInfo();
-		String catchExcVarName = "e";
-		assertThat(getClassNode(TestCls.class))
-				.code()
-				.containsOne("} catch (ProviderException | DateTimeException " + catchExcVarName + ") {")
-				.containsOne("throw new RuntimeException(" + catchExcVarName + ");");
-	}
+public class TestTryCatchInIf2 extends IntegrationTest {
 
 
 
@@ -114,13 +90,24 @@ public class TestTryCatchMultiException extends IntegrationTest {
 
 
 	public static class TestCls3 {
-		static abstract class Data { }
+		// 又发现一个报错的。。。
+//		public void test2(boolean flag) {
+//			String str = "";
+//			boolean flag2 = true;
+//			while (flag2) {
+//				try {
+//					str = toString();
+//				} catch (Exception e) {
+//					str = "error";
+//					break;
+//				}
+//				flag2 = Math.random() > 0.5;
+//			}
+//			System.out.println(str);
+//		}
 
-		private Class<Data> getDataClass() {return null;}
-
-		public void onCreate() {
-			Data obj = null;
-			Class<Data> cls = getDataClass();
+		public void onCreate(Class<?> cls) {
+			Object obj = null;
 			if (cls != null) {
 				try {
 					obj = cls.getDeclaredConstructor().newInstance();
@@ -130,8 +117,6 @@ public class TestTryCatchMultiException extends IntegrationTest {
 			}
 			System.out.println("obj = "+ obj);
 		}
-
-
 	}
 
 	@Test
@@ -140,6 +125,7 @@ public class TestTryCatchMultiException extends IntegrationTest {
 		noDebugInfo();
 		// java 8,9 都正常，10 开始就漏掉 catch 中的初始化了
 		useTargetJavaVersion(10);
+//		getArgs().setCfgOutput(true);
 		// 另：原代码不管是在开头 null 还是 catch 和 else 里 null, java 8, 9 反编译后都是 开头 null,
 		// 然后 java 10 反编译后都是只有 else 里一个 null
 		System.out.println("看看代码：\n" + getClassNode(TestCls3.class).getCode().toString());
