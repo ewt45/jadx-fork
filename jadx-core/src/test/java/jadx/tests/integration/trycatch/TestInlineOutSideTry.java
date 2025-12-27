@@ -1,8 +1,8 @@
 package jadx.tests.integration.trycatch;
 
-import org.junit.jupiter.api.Test;
-
 import java.util.regex.Pattern;
+
+import org.junit.jupiter.api.Test;
 
 import jadx.NotYetImplemented;
 import jadx.tests.api.IntegrationTest;
