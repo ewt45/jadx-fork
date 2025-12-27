@@ -7,6 +7,7 @@ import java.util.Objects;
 import java.util.Set;
 
 import jadx.core.dex.attributes.AFlag;
+import jadx.core.dex.attributes.AType;
 import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.InvokeCustomNode;
 import jadx.core.dex.instructions.InvokeNode;
@@ -18,6 +19,7 @@ import jadx.core.dex.instructions.args.SSAVar;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
+import jadx.core.dex.trycatch.CatchAttr;
 import jadx.core.dex.visitors.AbstractVisitor;
 import jadx.core.dex.visitors.JadxVisitor;
 import jadx.core.dex.visitors.ModVisitor;
@@ -243,7 +245,20 @@ public class CodeShrinkVisitor extends AbstractVisitor {
 				startCheck = true;
 			}
 		}
+
 		Set<BlockNode> pathsBlocks = BlockUtils.getAllPathsBlocks(assignBlock, useBlock);
+
+		// if assign is in try block, it can't be inlined to outside useBlock, which won't be caught
+		CatchAttr assignCatchAttr = BlockUtils.getCatchAttrForInsn(mth, assignInsn);
+		if (assignInsn.canThrowException() && !useInsn.isExitEdgeInsn() && assignCatchAttr != null) {
+			for (BlockNode block : pathsBlocks) {
+				// shouldn't inline if first comes assignBlock's try end then useBlock
+				if (block != useBlock && block.contains(AFlag.TRY_LEAVE) && assignCatchAttr.equals(block.get(AType.EXC_CATCH))) {
+					return false;
+				}
+			}
+		}
+
 		pathsBlocks.remove(assignBlock);
 		pathsBlocks.remove(useBlock);
 		for (BlockNode block : pathsBlocks) {
