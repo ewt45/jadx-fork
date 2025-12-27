@@ -22,6 +22,7 @@ public class JadxCLI {
 	private static final Logger LOG = LoggerFactory.getLogger(JadxCLI.class);
 
 	public static void main(String[] args) {
+		args = new String[] {"--help"};
 		int result = 1;
 		try {
 			result = execute(args);

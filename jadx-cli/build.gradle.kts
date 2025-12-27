@@ -24,6 +24,7 @@ dependencies {
 	runtimeOnly(project(":jadx-plugins:jadx-aab-input"))
 	runtimeOnly(project(":jadx-plugins:jadx-apkm-input"))
 	runtimeOnly(project(":jadx-plugins:jadx-apks-input"))
+	runtimeOnly(project(":jadx-plugins:jadx-cfg-viewer"))
 
 	implementation("org.jcommander:jcommander:2.0")
 	implementation("ch.qos.logback:logback-classic:1.5.22")
