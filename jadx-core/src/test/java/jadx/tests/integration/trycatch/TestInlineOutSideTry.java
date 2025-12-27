@@ -25,7 +25,9 @@ public class TestInlineOutSideTry extends IntegrationTest {
 
 		private double getDouble() throws Exception {
 			double d = Math.random();
-			if (d < 0.1) throw new Exception("d < 0.1");
+			if (d < 0.1) {
+				throw new Exception("d < 0.1");
+			}
 			return d;
 		}
 	}
@@ -45,7 +47,9 @@ public class TestInlineOutSideTry extends IntegrationTest {
 
 		private double getDouble() throws Exception {
 			double d = Math.random();
-			if (d < 0.1) throw new Exception("d < 0.1");
+			if (d < 0.1) {
+				throw new Exception("d < 0.1");
+			}
 			return d;
 		}
 	}
