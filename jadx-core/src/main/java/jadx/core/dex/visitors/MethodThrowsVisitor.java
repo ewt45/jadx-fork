@@ -1,7 +1,8 @@
 package jadx.core.dex.visitors;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collection;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +36,7 @@ import jadx.core.dex.trycatch.ExceptionHandler;
 import jadx.core.dex.visitors.regions.RegionMakerVisitor;
 import jadx.core.dex.visitors.typeinference.TypeCompare;
 import jadx.core.dex.visitors.typeinference.TypeCompareEnum;
+import jadx.core.utils.InsnUtils;
 import jadx.core.utils.exceptions.JadxException;
 
 @JadxVisitor(
@@ -137,6 +139,31 @@ public class MethodThrowsVisitor extends AbstractVisitor {
 		}
 	}
 
+	/**
+	 * At the time this visitor runs, some insns already wrapped, so unwrap them.
+	 * Returned list doesn't contain unthrowable insns.
+	 */
+	private Set<InsnNode> unwrapInsnsOfBlock(BlockNode block) {
+		Set<InsnNode> unWrappedInsns = new HashSet<>();
+
+		Deque<InsnNode> stack = new ArrayDeque<>();
+		block.getInstructions().forEach(stack::push);
+		while (!stack.isEmpty()) {
+			InsnNode current = stack.pop();
+			if (!current.containsWrappedInsn() && current.canThrowException()) {
+				unWrappedInsns.add(current);
+				continue;
+			}
+			for (InsnArg arg : current.getArguments()) {
+				InsnNode innerInsn = InsnUtils.getWrappedInsn(arg);
+				if (innerInsn != null) {
+					stack.push(innerInsn);
+				}
+			}
+		}
+		return unWrappedInsns;
+	}
+
 	private void checkInsn(MethodNode mth, InsnNode insn, Set<String> excludedExceptions, boolean skipExceptions) throws JadxException {
 		if (!skipExceptions && insn.getType() == InsnType.THROW && !insn.contains(AFlag.DONT_GENERATE)) {
 			InsnArg throwArg = insn.getArg(0);
@@ -154,12 +181,6 @@ public class MethodThrowsVisitor extends AbstractVisitor {
 					}
 				}
 				visitThrows(mth, exceptionType, excludedExceptions);
-			} else {
-				if (throwArg instanceof InsnWrapArg) {
-					InsnWrapArg insnWrapArg = (InsnWrapArg) throwArg;
-					ArgType exceptionType = insnWrapArg.getType();
-					visitThrows(mth, exceptionType, excludedExceptions);
-				}
 			}
 			return;
 		}
@@ -180,7 +201,9 @@ public class MethodThrowsVisitor extends AbstractVisitor {
 				MethodThrowsAttr cAttr = cMth.get(AType.METHOD_THROWS);
 				MethodThrowsAttr attr = mth.get(AType.METHOD_THROWS);
 				if (attr != null && cAttr != null && !cAttr.getList().isEmpty()) {
-					attr.getList().addAll(filterExceptions(cAttr.getList(), excludedExceptions));
+					for (String argTypeStr : cAttr.getList()) {
+						visitThrows(mth, ArgType.object(argTypeStr), excludedExceptions);
+					}
 				}
 			} else {
 				ClspClass clsDetails = root.getClsp().getClsDetails(classInfo.getType());
@@ -189,7 +212,9 @@ public class MethodThrowsVisitor extends AbstractVisitor {
 					if (cMth != null && cMth.getThrows() != null && !cMth.getThrows().isEmpty()) {
 						MethodThrowsAttr attr = mth.get(AType.METHOD_THROWS);
 						if (attr != null) {
-							attr.getList().addAll(filterExceptions(cMth.getThrows(), excludedExceptions));
+							for (ArgType argType : cMth.getThrows()) {
+								visitThrows(mth, argType, excludedExceptions);
+							}
 						}
 					}
 				}
@@ -249,41 +274,6 @@ public class MethodThrowsVisitor extends AbstractVisitor {
 			return true;
 		}
 		return root.getClsp().isImplements(type.getObject(), baseType.getObject());
-	}
-
-	private Collection<String> filterExceptions(Set<String> exceptions, Set<String> excludedExceptions) {
-		Set<String> filteredExceptions = new HashSet<>();
-		for (String exception : exceptions) {
-			boolean filtered = false;
-			for (String excluded : excludedExceptions) {
-				filtered = isBaseException(exception, excluded);
-				if (filtered) {
-					break;
-				}
-			}
-			if (!filtered) {
-				filteredExceptions.add(exception);
-			}
-		}
-		return filteredExceptions;
-	}
-
-	private Collection<String> filterExceptions(Collection<ArgType> exceptionArgTypes, Set<String> excludedExceptions) {
-		Set<String> filteredExceptions = new HashSet<>();
-		for (ArgType exceptionArgType : exceptionArgTypes) {
-			boolean filtered = false;
-			String exception = exceptionArgType.getObject();
-			for (String excluded : excludedExceptions) {
-				filtered = isBaseException(exception, excluded);
-				if (filtered) {
-					break;
-				}
-			}
-			if (!filtered) {
-				filteredExceptions.add(exception);
-			}
-		}
-		return filteredExceptions;
 	}
 
 	private @Nullable MethodNode searchOverriddenMethod(ClassNode cls, MethodInfo mth, String signature) {
