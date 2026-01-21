@@ -2,6 +2,8 @@ package jadx.core.dex.visitors.shrink;
 
 import java.util.ArrayList;
 import java.util.BitSet;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -20,12 +22,15 @@ import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.trycatch.CatchAttr;
+import jadx.core.dex.trycatch.TryCatchBlockAttr;
 import jadx.core.dex.visitors.AbstractVisitor;
 import jadx.core.dex.visitors.JadxVisitor;
 import jadx.core.dex.visitors.ModVisitor;
 import jadx.core.utils.BlockUtils;
 import jadx.core.utils.InsnList;
 import jadx.core.utils.InsnRemover;
+import jadx.core.utils.InsnUtils;
+import jadx.core.utils.ListUtils;
 import jadx.core.utils.RegionUtils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
@@ -211,6 +216,9 @@ public class CodeShrinkVisitor extends AbstractVisitor {
 		if (insn.contains(AFlag.FORCE_ASSIGN_INLINE)) {
 			return assignInline(mth, arg, insn, block);
 		}
+		// 要在 wrap 之前判断。
+		boolean isInlineCrossTryEnd = isInlineCrossTryEnd(mth, arg, insn);
+
 		// just move instruction into arg, don't unbind/copy/duplicate
 		InsnArg wrappedArg = arg.wrapInstruction(mth, insn, false);
 		boolean replaced = wrappedArg != null;
@@ -219,10 +227,62 @@ public class CodeShrinkVisitor extends AbstractVisitor {
 			if (parentInsn != null) {
 				parentInsn.inheritMetadata(insn);
 			}
+			if (isInlineCrossTryEnd) {
+				// TODO 这里替换不知道怎么搞。另外上面的 assignInline 还没加上。
+				BlockNode parentBlock = BlockUtils.getBlockByInsn(mth, parentInsn);
+				parentBlock.getInstructions().remove(parentInsn);
+//				InsnRemover.removeWithoutUnbind(mth, block, parentInsn);
+				BlockUtils.replaceInsn(mth, insn, parentInsn);
+			}
 			InsnRemover.unbindResult(mth, insn);
 			InsnRemover.removeWithoutUnbind(mth, block, insn);
 		}
 		return replaced;
+	}
+
+	/**
+	 * Before inline, check if assignInsn is inside try block and useInsn is outside it.
+	 * In this case useInsn should be moved to assign's block after inline.
+	 */
+	private static boolean isInlineCrossTryEnd(MethodNode mth, RegisterArg arg, InsnNode assignInsn) {
+		// 1. assign and use insn are in different blocks
+		// 2. assign is in try block and use is outside it
+		// 3. use insn cannot throw exceptions
+		RegisterArg useArg = arg.getSVar().getUseList().get(0);
+		InsnNode useInsn = useArg.getParentInsn();
+		if (useInsn == null || useInsn.canThrowException()) {
+			return false;
+		}
+		BlockNode assignBlock = BlockUtils.getBlockByInsn(mth, assignInsn);
+		BlockNode useBlock = BlockUtils.getBlockByInsn(mth, useInsn);
+		if (assignBlock == useBlock) {
+			return false;
+		}
+		// TODO 如果 assign 在 嵌套内部，但是抛出两个异常，内部和外部 try 各捕捉一个，那 assign 的 tryCatchAttr 是啥？
+		//  TRY_BLOCK_LIST ?
+		CatchAttr assignTcAttr = null;
+		CatchAttr useTcAttr = null;
+		for (InsnNode unwrappedAssignInsn : InsnUtils.getUnwrappedInsns(assignInsn, true)) {
+			assignTcAttr = unwrappedAssignInsn.get(AType.EXC_CATCH);
+			if (assignTcAttr != null) {
+				break;
+			}
+		}
+		if (assignTcAttr == null) {
+			return false;
+		}
+		for (InsnNode unwrappedAssignInsn : InsnUtils.getUnwrappedInsns(useInsn, true)) {
+			useTcAttr = unwrappedAssignInsn.get(AType.EXC_CATCH);
+			if (useTcAttr != null) {
+				break;
+			}
+		}
+		if (useTcAttr != null) {
+			return new HashSet<>(assignTcAttr.getHandlers()).containsAll(useTcAttr.getHandlers());
+		} else {
+			return true;
+		}
+
 	}
 
 	private static boolean canMoveBetweenBlocks(MethodNode mth, InsnNode assignInsn, BlockNode assignBlock,
@@ -248,16 +308,16 @@ public class CodeShrinkVisitor extends AbstractVisitor {
 
 		Set<BlockNode> pathsBlocks = BlockUtils.getAllPathsBlocks(assignBlock, useBlock);
 
-		// if assign is in try block, it can't be inlined to outside useBlock, which won't be caught
-		CatchAttr assignCatchAttr = BlockUtils.getCatchAttrForInsn(mth, assignInsn);
-		if (assignInsn.canThrowException() && !useInsn.isExitEdgeInsn() && assignCatchAttr != null) {
-			for (BlockNode block : pathsBlocks) {
-				// shouldn't inline if first comes assignBlock's try end then useBlock
-				if (block != useBlock && block.contains(AFlag.TRY_LEAVE) && assignCatchAttr.equals(block.get(AType.EXC_CATCH))) {
-					return false;
-				}
-			}
-		}
+//		// if assign is in try block, it can't be inlined to outside useBlock, which won't be caught
+//		CatchAttr assignCatchAttr = BlockUtils.getCatchAttrForInsn(mth, assignInsn);
+//		if (assignInsn.canThrowException() /*&& !useInsn.isExitEdgeInsn()*/ && assignCatchAttr != null) {
+//			for (BlockNode block : pathsBlocks) {
+//				// shouldn't inline if first comes assignBlock's try end then useBlock
+//				if (block != useBlock && block.contains(AFlag.TRY_LEAVE) && assignCatchAttr.equals(block.get(AType.EXC_CATCH))) {
+//					return false;
+//				}
+//			}
+//		}
 
 		pathsBlocks.remove(assignBlock);
 		pathsBlocks.remove(useBlock);

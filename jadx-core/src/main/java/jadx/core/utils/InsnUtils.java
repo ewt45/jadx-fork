@@ -1,6 +1,10 @@
 package jadx.core.utils;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -225,6 +229,37 @@ public class InsnUtils {
 			return ((InsnWrapArg) arg).getWrapInsn();
 		}
 		return null;
+	}
+
+	/**
+	 * return all wrapped insns in this insn. If includeWrapParent is true, returned set also
+	 * includes the wrapped insn's parent insns.
+	 */
+	public static Set<InsnNode> getUnwrappedInsns(InsnNode insn, boolean includeWrapParent) {
+		Set<InsnNode> unWrappedInsns = new HashSet<>();
+		if (insn == null) {
+			return unWrappedInsns;
+		}
+
+		Deque<InsnNode> stack = new ArrayDeque<>();
+		stack.push(insn);
+		while (!stack.isEmpty()) {
+			InsnNode current = stack.pop();
+			if (!current.containsWrappedInsn()) {
+				unWrappedInsns.add(current);
+				continue;
+			}
+			if (includeWrapParent) {
+				unWrappedInsns.add(current);
+			}
+			for (InsnArg arg : current.getArguments()) {
+				InsnNode innerInsn = InsnUtils.getWrappedInsn(arg);
+				if (innerInsn != null) {
+					stack.push(innerInsn);
+				}
+			}
+		}
+		return unWrappedInsns;
 	}
 
 	public static boolean isWrapped(InsnArg arg, InsnType insnType) {

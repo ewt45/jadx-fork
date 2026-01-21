@@ -1,6 +1,8 @@
 package jadx.core.dex.visitors;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -22,7 +24,6 @@ import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.InvokeNode;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.InsnArg;
-import jadx.core.dex.instructions.args.InsnWrapArg;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.ClassNode;
@@ -34,6 +35,7 @@ import jadx.core.dex.trycatch.ExceptionHandler;
 import jadx.core.dex.visitors.regions.RegionMakerVisitor;
 import jadx.core.dex.visitors.typeinference.TypeCompare;
 import jadx.core.dex.visitors.typeinference.TypeCompareEnum;
+import jadx.core.utils.InsnUtils;
 import jadx.core.utils.exceptions.JadxException;
 
 @JadxVisitor(
@@ -127,13 +129,24 @@ public class MethodThrowsVisitor extends AbstractVisitor {
 						excludedExceptions.add(handler.getArgType().toString());
 					}
 				}
-				for (final InsnNode insn : block.getInstructions()) {
+				for (final InsnNode insn : unwrapInsnsOfBlock(block)) {
 					checkInsn(mth, insn, excludedExceptions, skipExceptions);
 				}
 			}
 		} catch (Exception e) {
 			mth.addWarnComment("Failed to analyze thrown exceptions", e);
 		}
+	}
+
+	/**
+	 * At the time this visitor runs, some insns already wrapped, so unwrap them.
+	 */
+	private Set<InsnNode> unwrapInsnsOfBlock(BlockNode block) {
+		Set<InsnNode> unWrappedInsns = new HashSet<>();
+		for (InsnNode insn : block.getInstructions()) {
+			unWrappedInsns.addAll(InsnUtils.getUnwrappedInsns(insn, true));
+		}
+		return unWrappedInsns;
 	}
 
 	private void checkInsn(MethodNode mth, InsnNode insn, Set<String> excludedExceptions, boolean skipExceptions) throws JadxException {
@@ -153,12 +166,6 @@ public class MethodThrowsVisitor extends AbstractVisitor {
 					}
 				}
 				visitThrows(mth, exceptionType, excludedExceptions);
-			} else {
-				if (throwArg instanceof InsnWrapArg) {
-					InsnWrapArg insnWrapArg = (InsnWrapArg) throwArg;
-					ArgType exceptionType = insnWrapArg.getType();
-					visitThrows(mth, exceptionType, excludedExceptions);
-				}
 			}
 			return;
 		}
