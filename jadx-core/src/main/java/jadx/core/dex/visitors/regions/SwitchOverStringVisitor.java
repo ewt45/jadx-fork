@@ -68,15 +68,16 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 
 	@Override
 	public boolean visitRegion(MethodNode mth, IRegion region) {
-		if (region instanceof SwitchRegion) {
-			return restoreSwitchOverString(mth, (SwitchRegion) region);
+		// d8 optimization could turn first switch into if
+		if (region instanceof SwitchRegion || region instanceof IfRegion) {
+			return restoreSwitchOverString(mth, (IBranchRegion) region);
 		}
 		return false;
 	}
 
-	private boolean restoreSwitchOverString(MethodNode mth, SwitchRegion hashSwitch) {
+	private boolean restoreSwitchOverString(MethodNode mth, IBranchRegion hashSwitch) {
 		try {
-			// check for second switch
+			// second switch
 			IContainer nextContainer = RegionUtils.getNextContainer(mth, hashSwitch);
 			if (!(nextContainer instanceof SwitchRegion)) {
 				return false;
@@ -87,35 +88,47 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 				return false;
 			}
 
-			InsnNode hashSwInsn = BlockUtils.getLastInsnWithType(hashSwitch.getHeader(), InsnType.SWITCH);
-			if (hashSwInsn == null) {
-				return false;
-			}
-			RegisterArg strArg = getStrHashCodeArg(hashSwInsn.getArg(0));
-			if (strArg == null) {
-				return false;
-			}
-			int casesCount = hashSwitch.getCases().size();
-			boolean defaultCaseAdded = hashSwitch.getCases().stream().anyMatch(SwitchRegion.CaseInfo::isDefaultCase);
-			int casesWithString = defaultCaseAdded ? casesCount - 1 : casesCount;
-			SSAVar strVar = strArg.getSVar();
-			if (strVar.getUseCount() - 1 < casesWithString) {
-				// one 'hashCode' invoke and at least one 'equals' per case
-				return false;
-			}
-			// quick checks done, start collecting data to create a new switch region
-			Map<InsnNode, String> strEqInsns = collectEqualsInsns(mth, strVar);
-			if (strEqInsns.size() < casesWithString) {
-				return false;
-			}
-			SwitchData switchData = new SwitchData(mth, hashSwitch);
-			switchData.setStrEqInsns(strEqInsns);
-			switchData.setCases(new ArrayList<>(casesCount));
-			for (SwitchRegion.CaseInfo swCaseInfo : hashSwitch.getCases()) {
-				if (!processCase(switchData, swCaseInfo)) {
-					mth.addWarnComment("Failed to restore switch over string. Please report as a decompilation issue");
+			RegisterArg strArg;
+			SwitchData switchData;
+
+			if (hashSwitch instanceof SwitchRegion) {
+				SwitchRegion hashSwitch2 = (SwitchRegion) hashSwitch;
+				InsnNode hashSwInsn = BlockUtils.getLastInsnWithType(hashSwitch2.getHeader(), InsnType.SWITCH);
+				if (hashSwInsn == null) {
 					return false;
 				}
+				strArg = getStrHashCodeArg(hashSwInsn.getArg(0));
+				if (strArg == null) {
+					return false;
+				}
+				List<SwitchRegion.CaseInfo> hashCases = hashSwitch2.getCases();
+				int casesCount = hashCases.size();
+				boolean defaultCaseAdded = hashCases.stream().anyMatch(SwitchRegion.CaseInfo::isDefaultCase);
+				int casesWithString = defaultCaseAdded ? casesCount - 1 : casesCount;
+				SSAVar strVar = strArg.getSVar();
+				if (strVar.getUseCount() - 1 < casesWithString) {
+					// one 'hashCode' invoke and at least one 'equals' per case
+					return false;
+				}
+				// quick checks done, start collecting data to create a new switch region
+				Map<InsnNode, String> strEqInsns = collectEqualsInsns(mth, strVar);
+				if (strEqInsns.size() < casesWithString) {
+					return false;
+				}
+				switchData = new SwitchData(mth, hashSwitch);
+				switchData.setStrEqInsns(strEqInsns);
+				switchData.setCases(new ArrayList<>(casesCount));
+				for (SwitchRegion.CaseInfo swCaseInfo : hashCases) {
+					if (!processCase(switchData, swCaseInfo)) {
+						mth.addWarnComment("Failed to restore switch over string. Please report as a decompilation issue");
+						return false;
+					}
+				}
+			} else if (hashSwitch instanceof IfRegion) {
+				// TODO
+				return false;
+			} else {
+				return false;
 			}
 			// match remapping var to collect code from second switch
 			if (!mergeWithCode(switchData, codeSwitch, codeSwInsn)) {
@@ -178,14 +191,14 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		}
 	}
 
-	private boolean mergeWithCode(SwitchData switchData, SwitchRegion codeSwitch, InsnNode swInsn) {
-		RegisterArg numArg = (RegisterArg) swInsn.getArg(0);
+	private boolean mergeWithCode(SwitchData switchData, SwitchRegion codeSwitch, InsnNode codeSwInsn) {
+		RegisterArg numArg = (RegisterArg) codeSwInsn.getArg(0);
 
 		List<CaseData> cases = switchData.getCases();
 		// search index assign in cases code
 		int extracted = 0;
 		for (CaseData caseData : cases) {
-			InsnNode numInsn = searchConstInsn(switchData, caseData, swInsn);
+			InsnNode numInsn = searchConstInsn(switchData, caseData, codeSwInsn);
 			Integer num = extractConstNumber(switchData, numInsn, numArg);
 			if (num != null) {
 				caseData.setCodeNum(num);
