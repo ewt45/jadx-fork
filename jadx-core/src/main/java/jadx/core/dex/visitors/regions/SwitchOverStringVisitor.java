@@ -32,6 +32,7 @@ import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.instructions.args.SSAVar;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.FieldNode;
+import jadx.core.dex.nodes.IBranchRegion;
 import jadx.core.dex.nodes.IContainer;
 import jadx.core.dex.nodes.IRegion;
 import jadx.core.dex.nodes.InsnNode;
@@ -73,7 +74,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		return false;
 	}
 
-	private boolean restoreSwitchOverString(MethodNode mth, SwitchRegion switchRegion) {
+	private boolean restoreSwitchOverString(MethodNode mth, SwitchRegion hashSwitch) {
 		try {
 			InsnNode swInsn = BlockUtils.getLastInsnWithType(switchRegion.getHeader(), InsnType.SWITCH);
 			if (swInsn == null) {
@@ -83,8 +84,8 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			if (strArg == null) {
 				return false;
 			}
-			int casesCount = switchRegion.getCases().size();
-			boolean defaultCaseAdded = switchRegion.getCases().stream().anyMatch(SwitchRegion.CaseInfo::isDefaultCase);
+			int casesCount = hashSwitch.getCases().size();
+			boolean defaultCaseAdded = hashSwitch.getCases().stream().anyMatch(SwitchRegion.CaseInfo::isDefaultCase);
 			int casesWithString = defaultCaseAdded ? casesCount - 1 : casesCount;
 			SSAVar strVar = strArg.getSVar();
 			if (strVar.getUseCount() - 1 < casesWithString) {
@@ -96,10 +97,10 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			if (strEqInsns.size() < casesWithString) {
 				return false;
 			}
-			SwitchData switchData = new SwitchData(mth, switchRegion);
+			SwitchData switchData = new SwitchData(mth, hashSwitch);
 			switchData.setStrEqInsns(strEqInsns);
 			switchData.setCases(new ArrayList<>(casesCount));
-			for (SwitchRegion.CaseInfo swCaseInfo : switchRegion.getCases()) {
+			for (SwitchRegion.CaseInfo swCaseInfo : hashSwitch.getCases()) {
 				if (!processCase(switchData, swCaseInfo)) {
 					mth.addWarnComment("Failed to restore switch over string. Please report as a decompilation issue");
 					return false;
@@ -137,7 +138,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			switchData.getToRemove().forEach(i -> i.add(AFlag.REMOVE));
 			SwitchRegion codeSwitch = switchData.getCodeSwitch();
 			if (codeSwitch != null) {
-				IRegion parentRegion = switchData.getSwitchRegion().getParent();
+				IRegion parentRegion = switchData.getHashSwitch().getParent();
 				parentRegion.getSubBlocks().remove(codeSwitch);
 				codeSwitch.getHeader().add(AFlag.REMOVE);
 			}
@@ -165,7 +166,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 
 	private boolean mergeWithCode(SwitchData switchData) {
 		// check for second switch
-		IContainer nextContainer = RegionUtils.getNextContainer(switchData.getMth(), switchData.getSwitchRegion());
+		IContainer nextContainer = RegionUtils.getNextContainer(switchData.getMth(), switchData.getHashSwitch());
 		if (!(nextContainer instanceof SwitchRegion)) {
 			return false;
 		}
@@ -419,7 +420,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 
 	private static final class SwitchData {
 		private final MethodNode mth;
-		private final SwitchRegion switchRegion;
+		private final IBranchRegion hashSwitch;
 		private final List<IAttributeNode> toRemove = new ArrayList<>();
 		private Map<InsnNode, String> strEqInsns;
 		private List<CaseData> cases;
@@ -427,9 +428,9 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		private SwitchRegion codeSwitch;
 		private RegisterArg numArg;
 
-		private SwitchData(MethodNode mth, SwitchRegion switchRegion) {
+		private SwitchData(MethodNode mth, IBranchRegion hashSwitch) {
 			this.mth = mth;
-			this.switchRegion = switchRegion;
+			this.hashSwitch = hashSwitch;
 		}
 
 		public List<CaseData> getCases() {
@@ -460,8 +461,8 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			this.strEqInsns = strEqInsns;
 		}
 
-		public SwitchRegion getSwitchRegion() {
-			return switchRegion;
+		public IBranchRegion getHashSwitch() {
+			return hashSwitch;
 		}
 
 		public List<IAttributeNode> getToRemove() {
