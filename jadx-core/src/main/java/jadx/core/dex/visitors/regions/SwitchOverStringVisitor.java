@@ -76,11 +76,22 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 
 	private boolean restoreSwitchOverString(MethodNode mth, SwitchRegion hashSwitch) {
 		try {
-			InsnNode swInsn = BlockUtils.getLastInsnWithType(switchRegion.getHeader(), InsnType.SWITCH);
-			if (swInsn == null) {
+			// check for second switch
+			IContainer nextContainer = RegionUtils.getNextContainer(mth, hashSwitch);
+			if (!(nextContainer instanceof SwitchRegion)) {
 				return false;
 			}
-			RegisterArg strArg = getStrHashCodeArg(swInsn.getArg(0));
+			SwitchRegion codeSwitch = (SwitchRegion) nextContainer;
+			InsnNode codeSwInsn = BlockUtils.getLastInsnWithType(codeSwitch.getHeader(), InsnType.SWITCH);
+			if (codeSwInsn == null || !codeSwInsn.getArg(0).isRegister()) {
+				return false;
+			}
+
+			InsnNode hashSwInsn = BlockUtils.getLastInsnWithType(hashSwitch.getHeader(), InsnType.SWITCH);
+			if (hashSwInsn == null) {
+				return false;
+			}
+			RegisterArg strArg = getStrHashCodeArg(hashSwInsn.getArg(0));
 			if (strArg == null) {
 				return false;
 			}
@@ -107,24 +118,24 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 				}
 			}
 			// match remapping var to collect code from second switch
-			if (!mergeWithCode(switchData)) {
+			if (!mergeWithCode(switchData, codeSwitch, codeSwInsn)) {
 				mth.addWarnComment("Failed to restore switch over string. Please report as a decompilation issue");
 				return false;
 			}
 			// all checks passed, replace with new switch
-			IRegion parentRegion = switchRegion.getParent();
-			SwitchRegion replaceRegion = new SwitchRegion(parentRegion, switchRegion.getHeader());
+			IRegion parentRegion = codeSwitch.getParent();
+			SwitchRegion replaceRegion = new SwitchRegion(parentRegion, codeSwitch.getHeader());
 			for (SwitchRegion.CaseInfo caseInfo : switchData.getNewCases()) {
 				replaceRegion.addCase(Collections.unmodifiableList(caseInfo.getKeys()), caseInfo.getContainer());
 			}
-			if (!parentRegion.replaceSubBlock(switchRegion, replaceRegion)) {
+			if (!parentRegion.replaceSubBlock(codeSwitch, replaceRegion)) {
 				mth.addWarnComment("Failed to restore switch over string. Please report as a decompilation issue");
 				return false;
 			}
 			// replace confirmed, remove original code
 			markCodeForRemoval(switchData);
 			// use string arg directly in switch
-			swInsn.replaceArg(swInsn.getArg(0), strArg.duplicate());
+			codeSwInsn.replaceArg(codeSwInsn.getArg(0), strArg.duplicate());
 			return true;
 		} catch (StackOverflowError | Exception e) {
 			mth.addWarnComment("Failed to restore switch over string. Please report as a decompilation issue", e);
@@ -136,11 +147,10 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		MethodNode mth = switchData.getMth();
 		try {
 			switchData.getToRemove().forEach(i -> i.add(AFlag.REMOVE));
-			SwitchRegion codeSwitch = switchData.getCodeSwitch();
-			if (codeSwitch != null) {
-				IRegion parentRegion = switchData.getHashSwitch().getParent();
-				parentRegion.getSubBlocks().remove(codeSwitch);
-				codeSwitch.getHeader().add(AFlag.REMOVE);
+			IBranchRegion hashSwitch = switchData.getHashSwitch();
+			hashSwitch.getParent().getSubBlocks().remove(hashSwitch);
+			if (hashSwitch instanceof SwitchRegion) {
+				((SwitchRegion) hashSwitch).getHeader().add(AFlag.REMOVE);
 			}
 			RegisterArg numArg = switchData.getNumArg();
 			if (numArg != null) {
@@ -158,23 +168,17 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 					mth.removeSVar(ssaVar);
 				}
 			}
+			// keep second switch header, which used as replaced switchRegion header
+			for (InsnNode secondHeader : switchData.getCodeSwitch().getHeader().getInstructions()) {
+				secondHeader.remove(AFlag.REMOVE);
+			}
 			InsnRemover.removeAllMarked(mth);
 		} catch (StackOverflowError | Exception e) {
 			mth.addWarnComment("Failed to clean up code after switch over string restore", e);
 		}
 	}
 
-	private boolean mergeWithCode(SwitchData switchData) {
-		// check for second switch
-		IContainer nextContainer = RegionUtils.getNextContainer(switchData.getMth(), switchData.getHashSwitch());
-		if (!(nextContainer instanceof SwitchRegion)) {
-			return false;
-		}
-		SwitchRegion codeSwitch = (SwitchRegion) nextContainer;
-		InsnNode swInsn = BlockUtils.getLastInsnWithType(codeSwitch.getHeader(), InsnType.SWITCH);
-		if (swInsn == null || !swInsn.getArg(0).isRegister()) {
-			return false;
-		}
+	private boolean mergeWithCode(SwitchData switchData, SwitchRegion codeSwitch, InsnNode swInsn) {
 		RegisterArg numArg = (RegisterArg) swInsn.getArg(0);
 
 		List<CaseData> cases = switchData.getCases();
