@@ -1,7 +1,9 @@
 package jadx.core.dex.visitors.regions.maker;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -15,9 +17,15 @@ import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.nodes.EdgeInsnAttr;
 import jadx.core.dex.attributes.nodes.LoopInfo;
+import jadx.core.dex.attributes.nodes.SwitchStringAttr;
 import jadx.core.dex.instructions.IfNode;
+import jadx.core.dex.instructions.IfOp;
 import jadx.core.dex.instructions.InsnType;
+import jadx.core.dex.instructions.InvokeNode;
+import jadx.core.dex.instructions.SwitchInsn;
 import jadx.core.dex.instructions.args.InsnArg;
+import jadx.core.dex.instructions.args.InsnWrapArg;
+import jadx.core.dex.instructions.args.LiteralArg;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.IRegion;
@@ -29,7 +37,10 @@ import jadx.core.dex.regions.conditions.IfInfo;
 import jadx.core.dex.regions.conditions.IfRegion;
 import jadx.core.dex.regions.loops.LoopRegion;
 import jadx.core.dex.trycatch.ExcHandlerAttr;
+import jadx.core.dex.visitors.regions.SwitchOverStringVisitor;
 import jadx.core.utils.BlockUtils;
+import jadx.core.utils.InsnUtils;
+import jadx.core.utils.Utils;
 import jadx.core.utils.blocks.BlockSet;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
@@ -56,6 +67,10 @@ final class IfRegionMaker {
 		IfInfo currentIf = makeIfInfo(mth, block);
 		if (currentIf == null) {
 			return null;
+		}
+		// 如果对比 hashcode, 可能是 switch over string, 在结构改变前先读取并保存数据
+		if (currentIf.getMth().root().getArgs().isRestoreSwitchOverString()){
+			preProcessSwitchStringFirstIf(currentIf);
 		}
 		IfInfo mergedIf = mergeNestedIfNodes(currentIf);
 		if (mergedIf != null) {
@@ -365,6 +380,295 @@ final class IfRegionMaker {
 		IfInfo result = mergeIfInfo(currentIf, nextIf, followThenBranch);
 		// search next nested if block
 		return searchNestedIf(result);
+	}
+
+	private static IfCondition unwrapNOT2Compare(IfCondition c) {
+		if (c.getMode() == IfCondition.Mode.COMPARE) {
+			return c;
+		} else if (c.getMode() == IfCondition.Mode.NOT) {
+			c = c.getArgs().get(0);
+			return unwrapNOT2Compare(c);
+		} else {
+			return null;
+		}
+	}
+
+	private static @Nullable BlockNode getBranchBlockSkipEmpty(IfNode ifInsn, boolean then) {
+		BlockNode b = then ? ifInsn.getThenBlock() : ifInsn.getElseBlock();
+		while (b != null && b.getInstructions().isEmpty()) {
+			if (b.isMthExitBlock()) {
+				b = null;
+				break;
+			}
+			b = BlockUtils.getNextBlock(b);
+		}
+		return b;
+	}
+	private static @Nullable BlockNode getNextBlockSkipEmpty(BlockNode b) {
+		if (b == null || b.isMthExitBlock()) {
+			return null;
+		}
+		while (true) {
+			b = BlockUtils.getNextBlock(b);
+			if (b == null || b.isMthExitBlock()) {
+				return null;
+			}
+			if (!b.getInstructions().isEmpty()) {
+				return b;
+			}
+		}
+	}
+	// 参考 SwitchOverStringVisitor
+	private static @Nullable Integer extractConstNumber(MethodNode mth, @Nullable InsnNode numInsn, RegisterArg numArg) {
+		if (numInsn == null || numInsn.getArgsCount() != 1) {
+			return null;
+		}
+		Object constVal = InsnUtils.getConstValueByArg(mth.root(), numInsn.getArg(0));
+		if (constVal instanceof LiteralArg) {
+			if (numArg.sameCodeVar(numInsn.getResult())) {
+				return (int) ((LiteralArg) constVal).getLiteral();
+			}
+		}
+		return null;
+	}
+
+	// e.g. 'if (str.equals("aa") == true)'. return insn of 'str.equals("aa")'
+	private static @Nullable InvokeNode getStrEqInvokeFromIfInsn(IfNode strIfInsn) {
+		if (strIfInsn.getOp() != IfOp.EQ && strIfInsn.getOp() != IfOp.NE) {
+			return null;
+		}
+		boolean neg;
+		if (strIfInsn.getOp() == IfOp.EQ) {
+			neg = false;
+		} else if (strIfInsn.getOp() == IfOp.NE) {
+			neg = true;
+		} else {
+			return null;
+		}
+		if (strIfInsn.getArg(1).isFalse()) {
+			neg = !neg;
+		}
+
+		InsnWrapArg strCmpArg = Utils.cast(strIfInsn.getArg(0), InsnWrapArg.class);
+		InvokeNode eqIvkInsn = strCmpArg == null ? null : Utils.cast(strCmpArg.getWrapInsn(), InvokeNode.class);
+		if (eqIvkInsn == null || eqIvkInsn.getType() != InsnType.INVOKE
+				|| !eqIvkInsn.getCallMth().getRawFullId().equals("java.lang.String.equals(Ljava/lang/Object;)Z")) {
+			eqIvkInsn =  null;
+		}
+		return eqIvkInsn;
+	}
+	private static @Nullable RegisterArg getNumArgIn2ndSwitch(BlockNode switchBlock) {
+		SwitchInsn insn = (SwitchInsn) BlockUtils.getLastInsnWithType(switchBlock, InsnType.SWITCH);
+		if (insn != null) {
+			return Utils.cast(insn.getArg(0), RegisterArg.class);
+		} else {
+			return null;
+		}
+	}
+	// TODO 确保此函数中的 while 不会死循环？
+	private static void preProcessSwitchStringFirstIf(IfInfo currentIf) {
+		IfCondition condition = unwrapNOT2Compare(currentIf.getCondition());
+		if (condition == null) {
+			return;
+		}
+		IfNode hashIfInsn = condition.getCompare().getInsn();
+		if (hashIfInsn.getArgsCount() < 2) {
+			return;
+		}
+
+		MethodNode mth = currentIf.getMth();
+		// if 后应该是 switch
+		BlockNode secondSwitchBlock = BlockUtils.getPathCross(mth, currentIf.getThenBlock(), currentIf.getElseBlock());
+		// 存储第二个 switch 的判断的 arg
+		RegisterArg numArg = getNumArgIn2ndSwitch(secondSwitchBlock);
+		if (secondSwitchBlock == null || numArg == null
+				|| secondSwitchBlock.get(AType.SWITCH_STRING) != null) {
+			return;
+		}
+
+		// 存储目标字符串 hashcode 的 arg
+		RegisterArg targetStrHashArg = null;
+		// 存储目标字符串对象的 arg
+		RegisterArg targetStrArg = null;
+
+		// 存储每个 hash 比较成功后进入的分支。里面应该有字符串比较和第二个 switch 的 index 赋值
+		// key 正常为 Integer, 如果是 default 分支则为 Object
+		Map<Object, BlockNode> strCompareMap = new HashMap<>();
+		Object defaultKeyIn1stStage = new Object();
+
+		boolean neg = condition != currentIf.getCondition();
+
+		// 遍历 外层 if （比较 hashcode），记录内层 if（比较字符串）和第二个 switch
+		while (true) {
+			// 1st arg is targetStr hashCode, 2nd arg is keyStr hashcode
+			RegisterArg currTargetStrHashArg = Utils.cast(hashIfInsn.getArg(0), RegisterArg.class);
+			LiteralArg currKeyStrHashArg = Utils.cast(hashIfInsn.getArg(1), LiteralArg.class);
+			if (currTargetStrHashArg == null || currKeyStrHashArg == null) {
+				return;
+			}
+			if (targetStrHashArg == null) {
+				targetStrHashArg = currTargetStrHashArg;
+				targetStrArg = SwitchOverStringVisitor.getStrFromInsn(targetStrHashArg.getAssignInsn());
+				if (targetStrArg == null) {
+					return;
+				}
+			} else if (!targetStrHashArg.equals(currTargetStrHashArg)) {
+				return;
+			}
+
+			// get eqHashBranch to get some str.equals() if
+			// in this if's then block only 1 insn which is assign an index of 2nd switch
+			// the other branch is the next case
+			if (hashIfInsn.getOp() == IfOp.NE) {
+				neg = !neg;
+			}
+
+			// String.equals() 的 if
+			BlockNode eqHashBranch = getBranchBlockSkipEmpty(hashIfInsn, !neg);
+			// 下一个 hashcode 比较
+			BlockNode neHashBranch = getBranchBlockSkipEmpty(hashIfInsn, neg);
+			if (eqHashBranch == null || neHashBranch == null) {
+				return;
+			}
+
+			// 先把内层 if 存起来，找到所有 hashcode 对比的分支以及第二个 switch 后再进一步处理
+			int keyStrHash = (int) currKeyStrHashArg.getLiteral();
+			strCompareMap.put(keyStrHash, eqHashBranch);
+
+			InsnNode afterHashInsn = neHashBranch.getInstructions().get(0);
+			// 下一个外层 if
+			if (afterHashInsn instanceof IfNode) {
+				hashIfInsn = (IfNode) afterHashInsn;
+				neg = false;
+				continue;
+			}
+			// 第一阶段的 default
+			if (afterHashInsn.getType() == InsnType.CONST) {
+				strCompareMap.put(defaultKeyIn1stStage, neHashBranch);
+				neHashBranch = getNextBlockSkipEmpty(neHashBranch);
+				if (neHashBranch == null) {
+					return;
+				}
+				afterHashInsn = neHashBranch.getInstructions().get(0);
+			}
+			// 第一阶段结束，第二阶段的 switch
+			if (afterHashInsn instanceof SwitchInsn) {
+				// 第一阶段结束，第二阶段的 switch
+				secondSwitchBlock = neHashBranch;
+				numArg = Utils.cast(afterHashInsn.getArg(0), RegisterArg.class);
+				if (numArg == null) {
+					return;
+				}
+				break;
+			} else {
+				return;
+			}
+		}
+
+		SwitchStringAttr attr = new SwitchStringAttr(secondSwitchBlock);
+
+		// 遍历内层 if, 找到所有字符串对应第二个 switch 的 index, 并且确保内层 if结束的下一行是 switch
+		// 确保外层 hashcode 确实是字符串的 hashcode
+		for (Map.Entry<Object, BlockNode> entry : strCompareMap.entrySet()) {
+			// default 分支
+			if (entry.getKey() == defaultKeyIn1stStage) {
+				BlockNode defaultBranch = entry.getValue();
+				InsnNode assignIndexInsn = defaultBranch.getInstructions().get(0);
+				if (assignIndexInsn.getType() != InsnType.CONST) {
+					return;
+				}
+
+				// 确保下一行是第二个 switch
+				if (getNextBlockSkipEmpty(defaultBranch) != secondSwitchBlock) {
+					return;
+				}
+
+				// 记录 num 和对应的字符串。确认赋值的 arg 是同一个 numArg
+				Integer num = extractConstNumber(mth, assignIndexInsn, numArg);
+				if (num == null) {
+					return;
+				}
+				attr.getCaseByNum(num).addStr(null);
+				continue;
+			}
+
+			int strHash = (Integer) entry.getKey();
+			BlockNode strCompareBlock = entry.getValue();
+			IfNode strIfInsn = Utils.cast(strCompareBlock.getInstructions().get(0), IfNode.class);
+			if (strIfInsn == null) {
+				return;
+			}
+
+			if (strIfInsn.getOp() == IfOp.EQ) {
+				neg = false;
+			} else if (strIfInsn.getOp() == IfOp.NE) {
+				neg = true;
+			} else {
+				return;
+			}
+			if (strIfInsn.getArg(1).isFalse()) {
+				neg = !neg;
+			}
+
+			BlockNode eqStrBranch = getBranchBlockSkipEmpty(strIfInsn, !neg);
+			BlockNode neStrBranch = getBranchBlockSkipEmpty(strIfInsn, neg);
+			if (eqStrBranch == null || neStrBranch == null) {
+				return;
+			}
+			// 确保进入 eqStr 后赋值完下一行是第二个 switch
+			if (getNextBlockSkipEmpty(eqStrBranch) != secondSwitchBlock) {
+				return;
+			}
+
+			// 获取字符串
+			InvokeNode eqIvkInsn = getStrEqInvokeFromIfInsn(strIfInsn);
+			if (eqIvkInsn == null) {
+				return;
+			}
+
+			while (true) {
+				// TODO 确认字符串寄存器是同一个
+				// 第一个 arg 是目标字符串，第二个 arg 是常量字符串
+				RegisterArg currStrArg = Utils.cast(eqIvkInsn.getInstanceArg(), RegisterArg.class);
+				InsnArg secondArg = eqIvkInsn.getArg(1);
+				String strValue = Utils.cast(InsnUtils.getConstValueByArg(mth.root(), secondArg), String.class);
+				if (!targetStrArg.equals(currStrArg) || strValue == null || strValue.hashCode() != strHash) {
+					return;
+				}
+
+				// 赋值第二个 switch 的 num
+				InsnNode assignIndexInsn = eqStrBranch.getInstructions().get(0);
+				if (assignIndexInsn.getType() != InsnType.CONST) {
+					return;
+				}
+
+				// 记录 num 和对应的字符串。确认赋值的 arg 是同一个 numArg
+				Integer num = extractConstNumber(mth, assignIndexInsn, numArg);
+				if (num == null) {
+					return;
+				}
+				attr.getCaseByNum(num).addStr(strValue);
+
+				InsnNode neStrBranchInsn = neStrBranch.getInstructions().get(0);
+				if (neStrBranchInsn instanceof IfNode) {
+					// 相同 hashcode 的下一个字符串.equals() 判断
+					eqIvkInsn = getStrEqInvokeFromIfInsn((IfNode) neStrBranchInsn);
+					if (eqIvkInsn == null) {
+						return;
+					}
+				} else if (neStrBranchInsn.getType() == InsnType.CONST) {
+					// default 赋值，确保下一行是第二个 switch
+					if (getNextBlockSkipEmpty(neStrBranch) != secondSwitchBlock) {
+						return;
+					}
+					break;
+				} else {
+					return;
+				}
+			}
+		}
+
+		secondSwitchBlock.addAttr(attr);
 	}
 
 	private static IfInfo checkForTernaryInCondition(IfInfo currentIf) {

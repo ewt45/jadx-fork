@@ -28,6 +28,8 @@ import org.slf4j.LoggerFactory;
 
 import jadx.api.ICodeWriter;
 import jadx.api.JadxDecompiler;
+import jadx.core.dex.instructions.args.InsnArg;
+import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.visitors.DepthTraversal;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
@@ -513,7 +515,11 @@ public class Utils {
 		return new SimpleThreadFactory(name);
 	}
 
-	private static final class SimpleThreadFactory implements ThreadFactory {
+    public @Nullable static <T> T cast(Object obj, Class<T> cls) {
+		return (cls != null && cls.isInstance(obj)) ? cls.cast(obj) : null;
+    }
+
+    private static final class SimpleThreadFactory implements ThreadFactory {
 		private static final AtomicInteger POOL = new AtomicInteger(0);
 		private static final Thread.UncaughtExceptionHandler EXC_HANDLER = new SimpleUncaughtExceptionHandler();
 

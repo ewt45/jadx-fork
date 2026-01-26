@@ -40,6 +40,7 @@ import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.regions.SwitchRegion;
 import jadx.core.dex.regions.conditions.Compare;
 import jadx.core.dex.regions.conditions.IfCondition;
+import jadx.core.dex.regions.conditions.IfInfo;
 import jadx.core.dex.regions.conditions.IfRegion;
 import jadx.core.dex.visitors.AbstractVisitor;
 import jadx.core.dex.visitors.JadxVisitor;
@@ -49,6 +50,7 @@ import jadx.core.utils.InsnUtils;
 import jadx.core.utils.RegionUtils;
 import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxException;
+import jadx.core.utils.exceptions.JadxRuntimeException;
 
 @JadxVisitor(
 		name = "SwitchOverStringVisitor",
@@ -125,6 +127,164 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 					}
 				}
 			} else if (hashSwitch instanceof IfRegion) {
+//				{
+//					List<SwitchRegion.CaseInfo> hashCases = new ArrayList<>();
+//					IfRegion hashSwitch2 = (IfRegion) hashSwitch;
+//					SplitConditions splitConditions = new SplitConditions();
+//					splitCondition(splitConditions, hashSwitch2.getCondition());
+//					if (!splitConditions.isValid()) {
+//						return false;
+//					}
+//					// 外层 if, 判断 hashcode。但也可能包含了判断 str.equals() 的 condition
+//					for (IfCondition condition : splitConditions.list) {
+//						Compare compare = condition.getCompare();
+//						if (compare == null || compare.getInsn().getArgsCount() != 2) {
+//							return false;
+//						}
+//						IfNode ifInsn = compare.getInsn();
+//						// first arg is the value of str.hashCode(), second arg is hashcode of string case key
+//						InsnArg firstArg = ifInsn.getArg(0);
+//						if (!(firstArg instanceof RegisterArg)) {
+//							return false;
+//						}
+//						// 目标字符串的 hashcode, 用于和已知的 hashcode 比较
+//						SSAVar hashVar = ((RegisterArg) firstArg).getSVar();
+//						strArg = getStrFromInsn(hashVar.getAssignInsn());
+//						if (strArg == null) {
+//							return false;
+//						}
+//
+//						List<BlockNode> regionSubBlockNodes = new ArrayList<>();
+//						RegionUtils.visitBlockNodes(mth, hashSwitch2, regionSubBlockNodes::add);
+//
+//						// 外层 if，hashcode 对比
+//						for (RegisterArg useArg : hashVar.getUseList()) {
+//							InsnNode useInsn = useArg.getParentInsn();
+//							if (!(useInsn instanceof IfNode) || useInsn.getArgsCount() != 2) {
+//								return false;
+//							}
+//							IfNode useInsn2 = (IfNode) useInsn;
+//							int key = (int) ((LiteralArg) useInsn2.getArg(1)).getLiteral();
+//
+//							BlockNode hashEqBlock = BlockUtils.getBlockByInsn(mth, useInsn2, regionSubBlockNodes);
+//							IContainer hashEqContainer= RegionUtils.getBlockContainer(hashSwitch2, hashEqBlock);
+//							IContainer strEqContainer;
+//							if (hashEqContainer instanceof IfRegion) {
+//								IfRegion ir = (IfRegion) hashEqContainer;
+//								strEqContainer = neg ? ir.getElseRegion() : ir.getThenRegion();
+//							} else {
+//								return false;
+//							}
+//
+//							// TODO 多个 key 对应一个 container 是怎么处理的？还有 default
+//							if (strEqContainer == null) {
+//
+//							}
+//
+//							// TODO 一个 int 的 case 里可能包含多个字符串比较（字符串的 hash 相同）
+//							hashCases.add(new SwitchRegion.CaseInfo(List.of(key), strEqContainer));
+//						}
+//					}
+//					// 找到判断条件里的两个 arg, 第一个应该是 RegisterArg, 其 SVar 赋值来自 str.hashCode()，第二个是 int 常量
+//					// 第一个 arg 的 SVar.useList, 就是第一个 switch 的几个 case 的地方，再获取其 then/else region 创建 CaseInfo 就行了
+//					IfCondition condition = Objects.requireNonNull(hashSwitch2.getCondition());
+//					boolean neg = false;
+//					if (condition.getMode() == IfCondition.Mode.NOT) {
+//						condition = condition.getArgs().get(0);
+//						neg = true;
+//					}
+//					if (condition.getMode() != IfCondition.Mode.COMPARE) {
+//						return false;
+//					}
+//				}
+				{
+					IfRegion hashSwitch2 = (IfRegion) hashSwitch;
+					IfCondition condition = Objects.requireNonNull(hashSwitch2.getCondition());
+					boolean neg = false;
+					// 存储目标字符串 hashcode 的 arg
+					RegisterArg targetStrHashArg = null;
+
+					if (condition.getMode() == IfCondition.Mode.NOT) {
+						condition = condition.getArgs().get(0);
+						neg = true;
+					}
+
+					Compare compare = condition.getCompare();
+					if (compare == null) {
+						return false;
+					}
+					// TODO 给第一个 insn 也做通用处理
+					IfNode ifInsn = compare.getInsn();
+					if (ifInsn.getArgsCount() < 2) {
+						return false;
+					}
+
+					strArg = getStrHashCodeArg(ifInsn.getArg(0));
+					if (strArg == null) {
+						return false;
+					}
+					SSAVar strVar = strArg.getSVar();
+
+					// 1st arg is targetStr hashCode, 2nd arg is keyStr hashcode
+					RegisterArg currTargetStrHashArg = Utils.cast(ifInsn.getArg(0), RegisterArg.class);
+					LiteralArg currKeyStrHashArg = Utils.cast(ifInsn.getArg(1), LiteralArg.class);
+					if (currTargetStrHashArg == null || currKeyStrHashArg == null) {
+						return false;
+					}
+					if (targetStrHashArg == null) {
+						targetStrHashArg = currTargetStrHashArg;
+					} else if (targetStrHashArg != currTargetStrHashArg) {
+						return false;
+					}
+
+					int keyStrHash = (int) currKeyStrHashArg.getLiteral();
+					// get eqHashBranch to get some str.equals() if
+					// in this if's then block only 1 insn which is assign an index of 2nd switch
+					// the other branch is the next case
+					if (ifInsn.getOp() == IfOp.NE) {
+						neg = !neg;
+					}
+					IContainer eqHashBranch = neg ? hashSwitch2.getElseRegion() : hashSwitch2.getThenRegion();
+					IContainer neHashBranch = neg ? hashSwitch2.getThenRegion() : hashSwitch2.getElseRegion();
+
+					// 参考 processCase
+					// find str.equals() ifInsns
+					AtomicBoolean fail = new AtomicBoolean(false);
+					RegionUtils.visitBlockNodes(mth, eqHashBranch, blockNode -> {
+						if (fail.get()) {
+							return;
+						}
+						for (InsnNode insn : blockNode.getInstructions()) {
+							IfNode strEqualsIfInsn = Utils.cast(insn, IfNode.class);
+							// 获取字符串。参考 collectEqualsInsns
+							String keyStr = null;
+							if (strEqualsIfInsn != null) {
+								InsnWrapArg firstArg = Utils.cast(ifInsn.getArg(0), InsnWrapArg.class);
+								if (firstArg != null) {
+									// String.equals(), 1st arg is targetStr, 2nd arg is keyStr
+									InvokeNode strEqualsInvoke = Utils.cast(firstArg.getWrapInsn(), InvokeNode.class);
+									if (strEqualsInvoke != null && strEqualsInvoke.getCallMth().getRawFullId().equals("java.lang.String.equals(Ljava/lang/Object;)Z")) {
+										Object strValue = InsnUtils.getConstValueByArg(mth.root(), strEqualsInvoke.getArg(1));
+										if (strValue instanceof String) {
+											keyStr = (String) strValue;
+										}
+									}
+								}
+							}
+							if (keyStr == null) {
+								return;
+							}
+						}
+					});
+					if (fail.get()) {
+						return false;
+					}
+				}
+
+
+
+				// 到 nextContainer 为 codeSwitch 为止
+
 				// TODO
 				return false;
 			} else {
@@ -153,6 +313,78 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		} catch (StackOverflowError | Exception e) {
 			mth.addWarnComment("Failed to restore switch over string. Please report as a decompilation issue", e);
 			return false;
+		}
+	}
+
+	// 如果 NOT 和 NE 共同出现的时候？
+	private static void splitCondition(
+			SplitConditions splitData,IfCondition condition) {
+		if (condition == null) {
+			return;
+		}
+		if (condition.getMode() == IfCondition.Mode.COMPARE) {
+			if (condition.getCompare().getOp() == IfOp.NE) {
+				splitData.addNE(condition);
+			} else if (condition.getCompare().getOp() == IfOp.EQ) {
+				splitData.addEQ(condition);
+			} else {
+				return;
+			}
+		} else if (condition.getMode() == IfCondition.Mode.NOT) {
+			splitData.NOT();
+			IfCondition innerCondition = condition.getArgs().get(0);
+			splitCondition(splitData, innerCondition);
+		} else {
+			return;
+		}
+	}
+
+	private static final class SplitConditions {
+		List<IfCondition> list = new ArrayList<>();
+		// IfCondition 如果是 not，后续添加的 condition 都要反过来。允许多次 not.
+		boolean not = false;
+		// 只能翻转一次。如果翻转过了还不满足条件就不行了
+		boolean inverted = false;
+		int eqCount = 0;
+		int neCount = 0;
+		// 如果已经添加了 ne,则返回 false
+		public boolean addEQ(IfCondition c) {
+			return not ? addNEInner(c) : addEQInner(c);
+		}
+		private boolean addEQInner(IfCondition c) {
+			list.add(c);
+			eqCount ++;
+			return neCount == 0;
+		}
+		public boolean addNE(IfCondition c) {
+			return not ? addEQInner(c) : addNEInner(c);
+
+		}
+		public boolean addNEInner(IfCondition c) {
+			list.add(c);
+			neCount ++;
+			inverted = true;
+			return eqCount == 0;
+		}
+		public void NOT() {
+			not = !not;
+		}
+		// 确保拆分后的每个condition都是EQ或NE
+		public boolean isValid() {
+			return (eqCount != 0 && neCount == 0 && !inverted)
+					|| (eqCount == 0 && neCount != 0 && inverted);
+		}
+		public IContainer getEQBranch(IfCondition condition) {
+			Compare compare = condition.getCompare();
+			if (!isValid() || !list.contains(condition) || compare == null)
+				throw new JadxRuntimeException("Not valid");
+			return inverted ? compare.getInsn().getElseBlock() : compare.getInsn().getThenBlock();
+		}
+		public void reset() {
+			list.clear();
+			inverted = false;
+			eqCount = 0;
+			neCount = 0;
 		}
 	}
 
@@ -419,7 +651,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		return null;
 	}
 
-	private @Nullable RegisterArg getStrFromInsn(@Nullable InsnNode insn) {
+	public static @Nullable RegisterArg getStrFromInsn(@Nullable InsnNode insn) {
 		if (insn == null || insn.getType() != InsnType.INVOKE) {
 			return null;
 		}
