@@ -16,7 +16,7 @@ import jadx.core.dex.nodes.BlockNode;
  */
 public class SwitchStringAttr implements IJadxAttribute {
 	// each item is a case in 2nd switch
-	private final List<SwitchStringData> casesIn2ndSwitch = new ArrayList<>();
+	private final List<Case> casesIn2ndSwitch = new ArrayList<>();
 	private final BlockNode secondSwitchBlock;
 
 	public SwitchStringAttr(BlockNode secondSwitchBlock) {
@@ -26,14 +26,13 @@ public class SwitchStringAttr implements IJadxAttribute {
 	/**
 	 * return 2nd switch's case, by num case key
 	 */
-	public @NotNull SwitchStringData getCaseByNum(Integer num) {
-		for (SwitchStringData data : casesIn2ndSwitch) {
-			if (data.getNumKeyIn2ndSwitch().contains(num)) {
+	public @NotNull SwitchStringAttr.Case getCaseByNum(int num) {
+		for (Case data : casesIn2ndSwitch) {
+			if (data.getNumKeyIn2ndSwitch() == num) {
 				return data;
 			}
 		}
-		SwitchStringData data = new SwitchStringData();
-		data.getNumKeyIn2ndSwitch().add(num);
+		Case data = new Case(num);
 		casesIn2ndSwitch.add(data);
 		return data;
 	}
@@ -46,19 +45,27 @@ public class SwitchStringAttr implements IJadxAttribute {
 	@Override
 	public String toString() {
 		StringBuilder s = new StringBuilder("SWITCH_STRING");
-		for (SwitchStringData data : casesIn2ndSwitch) {
+		for (Case data : casesIn2ndSwitch) {
 			s.append("\n ").append(data);
 		}
 		return s.toString();
 	}
 
-	public static final class SwitchStringData {
+	public List<Case> getAllCases() {
+		return casesIn2ndSwitch;
+	}
+
+	public static final class Case {
 		// 2nd switch's case key
-		private final List<Integer> numKeyIn2ndSwitch = new ArrayList<>();
+		private final int numKeyIn2ndSwitch;
 		// corresponding strings acquired from 1st switch
 		private final List<String> strings = new ArrayList<>();
 
-		public List<Integer> getNumKeyIn2ndSwitch() {
+		public Case(int numKeyIn2ndSwitch) {
+			this.numKeyIn2ndSwitch = numKeyIn2ndSwitch;
+		}
+
+		public int getNumKeyIn2ndSwitch() {
 			return numKeyIn2ndSwitch;
 		}
 
@@ -66,6 +73,10 @@ public class SwitchStringAttr implements IJadxAttribute {
 			if (str != null) {
 				strings.add(str);
 			}
+		}
+
+		public List<String> getStrs() {
+			return strings;
 		}
 
 		@Override

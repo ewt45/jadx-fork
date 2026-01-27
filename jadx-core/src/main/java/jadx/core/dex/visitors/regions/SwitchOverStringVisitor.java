@@ -16,9 +16,11 @@ import jadx.api.plugins.input.data.annotations.EncodedType;
 import jadx.api.plugins.input.data.annotations.EncodedValue;
 import jadx.api.plugins.input.data.attributes.JadxAttrType;
 import jadx.core.dex.attributes.AFlag;
+import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.IAttributeNode;
 import jadx.core.dex.attributes.nodes.CodeFeaturesAttr;
 import jadx.core.dex.attributes.nodes.CodeFeaturesAttr.CodeFeature;
+import jadx.core.dex.attributes.nodes.SwitchStringAttr;
 import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.instructions.IfNode;
 import jadx.core.dex.instructions.IfOp;
@@ -40,7 +42,6 @@ import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.regions.SwitchRegion;
 import jadx.core.dex.regions.conditions.Compare;
 import jadx.core.dex.regions.conditions.IfCondition;
-import jadx.core.dex.regions.conditions.IfInfo;
 import jadx.core.dex.regions.conditions.IfRegion;
 import jadx.core.dex.visitors.AbstractVisitor;
 import jadx.core.dex.visitors.JadxVisitor;
@@ -118,6 +119,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 					return false;
 				}
 				switchData = new SwitchData(mth, hashSwitch);
+				switchData.setNumArg((RegisterArg) codeSwInsn.getArg(0));
 				switchData.setStrEqInsns(strEqInsns);
 				switchData.setCases(new ArrayList<>(casesCount));
 				for (SwitchRegion.CaseInfo swCaseInfo : hashCases) {
@@ -125,6 +127,9 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 						mth.addWarnComment("Failed to restore switch over string. Please report as a decompilation issue");
 						return false;
 					}
+				}
+				if (!setCodeNum(switchData)) {
+					return false;
 				}
 			} else if (hashSwitch instanceof IfRegion) {
 //				{
@@ -197,101 +202,134 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 //						return false;
 //					}
 //				}
-				{
-					IfRegion hashSwitch2 = (IfRegion) hashSwitch;
-					IfCondition condition = Objects.requireNonNull(hashSwitch2.getCondition());
-					boolean neg = false;
-					// 存储目标字符串 hashcode 的 arg
-					RegisterArg targetStrHashArg = null;
 
-					if (condition.getMode() == IfCondition.Mode.NOT) {
-						condition = condition.getArgs().get(0);
-						neg = true;
-					}
 
-					Compare compare = condition.getCompare();
-					if (compare == null) {
-						return false;
-					}
-					// TODO 给第一个 insn 也做通用处理
-					IfNode ifInsn = compare.getInsn();
-					if (ifInsn.getArgsCount() < 2) {
-						return false;
-					}
 
-					strArg = getStrHashCodeArg(ifInsn.getArg(0));
-					if (strArg == null) {
-						return false;
-					}
-					SSAVar strVar = strArg.getSVar();
 
-					// 1st arg is targetStr hashCode, 2nd arg is keyStr hashcode
-					RegisterArg currTargetStrHashArg = Utils.cast(ifInsn.getArg(0), RegisterArg.class);
-					LiteralArg currKeyStrHashArg = Utils.cast(ifInsn.getArg(1), LiteralArg.class);
-					if (currTargetStrHashArg == null || currKeyStrHashArg == null) {
-						return false;
-					}
-					if (targetStrHashArg == null) {
-						targetStrHashArg = currTargetStrHashArg;
-					} else if (targetStrHashArg != currTargetStrHashArg) {
-						return false;
-					}
-
-					int keyStrHash = (int) currKeyStrHashArg.getLiteral();
-					// get eqHashBranch to get some str.equals() if
-					// in this if's then block only 1 insn which is assign an index of 2nd switch
-					// the other branch is the next case
-					if (ifInsn.getOp() == IfOp.NE) {
-						neg = !neg;
-					}
-					IContainer eqHashBranch = neg ? hashSwitch2.getElseRegion() : hashSwitch2.getThenRegion();
-					IContainer neHashBranch = neg ? hashSwitch2.getThenRegion() : hashSwitch2.getElseRegion();
-
-					// 参考 processCase
-					// find str.equals() ifInsns
-					AtomicBoolean fail = new AtomicBoolean(false);
-					RegionUtils.visitBlockNodes(mth, eqHashBranch, blockNode -> {
-						if (fail.get()) {
-							return;
-						}
-						for (InsnNode insn : blockNode.getInstructions()) {
-							IfNode strEqualsIfInsn = Utils.cast(insn, IfNode.class);
-							// 获取字符串。参考 collectEqualsInsns
-							String keyStr = null;
-							if (strEqualsIfInsn != null) {
-								InsnWrapArg firstArg = Utils.cast(ifInsn.getArg(0), InsnWrapArg.class);
-								if (firstArg != null) {
-									// String.equals(), 1st arg is targetStr, 2nd arg is keyStr
-									InvokeNode strEqualsInvoke = Utils.cast(firstArg.getWrapInsn(), InvokeNode.class);
-									if (strEqualsInvoke != null && strEqualsInvoke.getCallMth().getRawFullId().equals("java.lang.String.equals(Ljava/lang/Object;)Z")) {
-										Object strValue = InsnUtils.getConstValueByArg(mth.root(), strEqualsInvoke.getArg(1));
-										if (strValue instanceof String) {
-											keyStr = (String) strValue;
-										}
-									}
-								}
-							}
-							if (keyStr == null) {
-								return;
-							}
-						}
-					});
-					if (fail.get()) {
-						return false;
-					}
-				}
+//				{
+//					IfRegion hashSwitch2 = (IfRegion) hashSwitch;
+//					IfCondition condition = Objects.requireNonNull(hashSwitch2.getCondition());
+//					boolean neg = false;
+//					// 存储目标字符串 hashcode 的 arg
+//					RegisterArg targetStrHashArg = null;
+//
+//					if (condition.getMode() == IfCondition.Mode.NOT) {
+//						condition = condition.getArgs().get(0);
+//						neg = true;
+//					}
+//
+//					Compare compare = condition.getCompare();
+//					if (compare == null) {
+//						return false;
+//					}
+//					// TODO 给第一个 insn 也做通用处理
+//					IfNode ifInsn = compare.getInsn();
+//					if (ifInsn.getArgsCount() < 2) {
+//						return false;
+//					}
+//
+//					strArg = getStrHashCodeArg(ifInsn.getArg(0));
+//					if (strArg == null) {
+//						return false;
+//					}
+//					SSAVar strVar = strArg.getSVar();
+//
+//					// 1st arg is targetStr hashCode, 2nd arg is keyStr hashcode
+//					RegisterArg currTargetStrHashArg = Utils.cast(ifInsn.getArg(0), RegisterArg.class);
+//					LiteralArg currKeyStrHashArg = Utils.cast(ifInsn.getArg(1), LiteralArg.class);
+//					if (currTargetStrHashArg == null || currKeyStrHashArg == null) {
+//						return false;
+//					}
+//					if (targetStrHashArg == null) {
+//						targetStrHashArg = currTargetStrHashArg;
+//					} else if (targetStrHashArg != currTargetStrHashArg) {
+//						return false;
+//					}
+//
+//					int keyStrHash = (int) currKeyStrHashArg.getLiteral();
+//					// get eqHashBranch to get some str.equals() if
+//					// in this if's then block only 1 insn which is assign an index of 2nd switch
+//					// the other branch is the next case
+//					if (ifInsn.getOp() == IfOp.NE) {
+//						neg = !neg;
+//					}
+//					IContainer eqHashBranch = neg ? hashSwitch2.getElseRegion() : hashSwitch2.getThenRegion();
+//					IContainer neHashBranch = neg ? hashSwitch2.getThenRegion() : hashSwitch2.getElseRegion();
+//
+//					// 参考 processCase
+//					// find str.equals() ifInsns
+//					AtomicBoolean fail = new AtomicBoolean(false);
+//					RegionUtils.visitBlockNodes(mth, eqHashBranch, blockNode -> {
+//						if (fail.get()) {
+//							return;
+//						}
+//						for (InsnNode insn : blockNode.getInstructions()) {
+//							IfNode strEqualsIfInsn = Utils.cast(insn, IfNode.class);
+//							// 获取字符串。参考 collectEqualsInsns
+//							String keyStr = null;
+//							if (strEqualsIfInsn != null) {
+//								InsnWrapArg firstArg = Utils.cast(ifInsn.getArg(0), InsnWrapArg.class);
+//								if (firstArg != null) {
+//									// String.equals(), 1st arg is targetStr, 2nd arg is keyStr
+//									InvokeNode strEqualsInvoke = Utils.cast(firstArg.getWrapInsn(), InvokeNode.class);
+//									if (strEqualsInvoke != null && strEqualsInvoke.getCallMth().getRawFullId().equals("java.lang.String.equals(Ljava/lang/Object;)Z")) {
+//										Object strValue = InsnUtils.getConstValueByArg(mth.root(), strEqualsInvoke.getArg(1));
+//										if (strValue instanceof String) {
+//											keyStr = (String) strValue;
+//										}
+//									}
+//								}
+//							}
+//							if (keyStr == null) {
+//								return;
+//							}
+//						}
+//					});
+//					if (fail.get()) {
+//						return false;
+//					}
+//				}
 
 
 
 				// 到 nextContainer 为 codeSwitch 为止
 
 				// TODO
-				return false;
+
+
+				SwitchStringAttr attr = codeSwitch.getHeader().get(AType.SWITCH_STRING);
+				if (attr == null) {
+					return false;
+				}
+				IfRegion hashSwitch2 = (IfRegion) hashSwitch;
+				IfCondition condition = Objects.requireNonNull(hashSwitch2.getCondition());
+				InsnNode ifInsn = Objects.requireNonNull(condition.getCompare()).getInsn();
+				RegisterArg strHashArg = (RegisterArg) ifInsn.getArg(0);
+				strArg = Objects.requireNonNull(getStrFromInsn(strHashArg.getAssignInsn()));
+				SSAVar strVar = strArg.getSVar();
+				Map<InsnNode, String> strEqInsns = collectEqualsInsns(mth, strVar);
+				List<SwitchStringAttr.Case> attrCases = attr.getAllCases();
+
+				switchData = new SwitchData(mth, hashSwitch);
+				switchData.setNumArg((RegisterArg) codeSwInsn.getArg(0));
+				switchData.setStrEqInsns(strEqInsns);
+				switchData.setCases(new ArrayList<>(attrCases.size()));
+				RegionUtils.visitBlockNodes(mth, hashSwitch2, block -> {
+					switchData.getToRemove().addAll(block.getInstructions());
+				});
+				for (SwitchStringAttr.Case caseInfo : attrCases) {
+					CaseData caseData = new CaseData();
+					caseData.setCodeNum(caseInfo.getNumKeyIn2ndSwitch());
+					caseData.getStrValues().addAll(caseInfo.getStrs());
+					switchData.getCases().add(caseData);
+				}
+//				return false;
+
 			} else {
 				return false;
 			}
 			// match remapping var to collect code from second switch
-			if (!mergeWithCode(switchData, codeSwitch, codeSwInsn)) {
+			if (!mergeWithCode(switchData, codeSwitch)) {
 				mth.addWarnComment("Failed to restore switch over string. Please report as a decompilation issue");
 				return false;
 			}
@@ -423,14 +461,13 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		}
 	}
 
-	private boolean mergeWithCode(SwitchData switchData, SwitchRegion codeSwitch, InsnNode codeSwInsn) {
-		RegisterArg numArg = (RegisterArg) codeSwInsn.getArg(0);
-
+	private boolean setCodeNum(SwitchData switchData) {
+		RegisterArg numArg = switchData.getNumArg();
 		List<CaseData> cases = switchData.getCases();
 		// search index assign in cases code
 		int extracted = 0;
 		for (CaseData caseData : cases) {
-			InsnNode numInsn = searchConstInsn(switchData, caseData, codeSwInsn);
+			InsnNode numInsn = searchConstInsn(switchData, caseData, numArg);
 			Integer num = extractConstNumber(switchData, numInsn, numArg);
 			if (num != null) {
 				caseData.setCodeNum(num);
@@ -441,9 +478,11 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			// nothing to merge, code already inside first switch cases
 			return true;
 		}
-		if (extracted != cases.size()) {
-			return false;
-		}
+		return extracted == cases.size();
+	}
+	private boolean mergeWithCode(SwitchData switchData, SwitchRegion codeSwitch) {
+		List<CaseData> cases = switchData.getCases();
+
 		// TODO: additional checks for found index numbers
 		cases.sort(Comparator.comparingInt(CaseData::getCodeNum));
 
@@ -499,7 +538,6 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			newCases.add(newCase);
 		}
 		switchData.setCodeSwitch(codeSwitch);
-		switchData.setNumArg(numArg);
 		switchData.setNewCases(newCases);
 		return true;
 	}
@@ -517,7 +555,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		return null;
 	}
 
-	private static @Nullable InsnNode searchConstInsn(SwitchData switchData, CaseData caseData, InsnNode swInsn) {
+	private static @Nullable InsnNode searchConstInsn(SwitchData switchData, CaseData caseData, InsnArg numArg) {
 		IContainer container = caseData.getCode();
 		if (container != null) {
 			List<InsnNode> insns = RegionUtils.collectInsns(switchData.getMth(), container);
@@ -528,9 +566,8 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		} else if (caseData.getBlockRef() != null) {
 			// variable used unchanged on path from block ref
 			BlockNode blockRef = caseData.getBlockRef();
-			InsnArg swArg = swInsn.getArg(0);
-			if (swArg.isRegister()) {
-				InsnNode assignInsn = ((RegisterArg) swArg).getSVar().getAssignInsn();
+			if (numArg.isRegister()) {
+				InsnNode assignInsn = ((RegisterArg) numArg).getSVar().getAssignInsn();
 				if (assignInsn != null && assignInsn.getType() == InsnType.PHI) {
 					RegisterArg arg = ((PhiInsn) assignInsn).getArgByBlock(blockRef);
 					if (arg != null) {
