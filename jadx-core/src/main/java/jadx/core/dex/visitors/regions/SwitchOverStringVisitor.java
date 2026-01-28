@@ -100,10 +100,12 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 				if (hashSwInsn == null) {
 					return false;
 				}
-				strArg = getStrHashCodeArg(hashSwInsn.getArg(0));
-				if (strArg == null) {
+				InvokeNode hashCodeIvk = getStrHashCodeInvoke(hashSwInsn.getArg(0));
+				InsnArg arg = hashCodeIvk == null ? null : hashCodeIvk.getInstanceArg();
+				if (arg == null || !arg.isRegister()) {
 					return false;
 				}
+				strArg = (RegisterArg) arg;
 				List<SwitchRegion.CaseInfo> hashCases = hashSwitch2.getCases();
 				int casesCount = hashCases.size();
 				boolean defaultCaseAdded = hashCases.stream().anyMatch(SwitchRegion.CaseInfo::isDefaultCase);
@@ -120,6 +122,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 				}
 				switchData = new SwitchData(mth, hashSwitch);
 				switchData.setNumArg((RegisterArg) codeSwInsn.getArg(0));
+				switchData.getToRemove().add(hashCodeIvk);
 				switchData.setStrEqInsns(strEqInsns);
 				switchData.setCases(new ArrayList<>(casesCount));
 				for (SwitchRegion.CaseInfo swCaseInfo : hashCases) {
@@ -303,6 +306,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 				}
 				IfRegion hashSwitch2 = (IfRegion) hashSwitch;
 				IfCondition condition = Objects.requireNonNull(hashSwitch2.getCondition());
+				// TODO 可能是 NOT
 				InsnNode ifInsn = Objects.requireNonNull(condition.getCompare()).getInsn();
 				RegisterArg strHashArg = (RegisterArg) ifInsn.getArg(0);
 				strArg = Objects.requireNonNull(getStrFromInsn(strHashArg.getAssignInsn()));
@@ -312,6 +316,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 
 				switchData = new SwitchData(mth, hashSwitch);
 				switchData.setNumArg((RegisterArg) codeSwInsn.getArg(0));
+				switchData.setHashArg(strHashArg);
 				switchData.setStrEqInsns(strEqInsns);
 				switchData.setCases(new ArrayList<>(attrCases.size()));
 				RegionUtils.visitBlockNodes(mth, hashSwitch2, block -> {
@@ -426,6 +431,25 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		}
 	}
 
+	private static void toRemoveSsaVar(MethodNode mth, RegisterArg arg) {
+		if (arg == null) {
+			return;
+		}
+		for (SSAVar ssaVar : arg.getSVar().getCodeVar().getSsaVars()) {
+			InsnNode assignInsn = ssaVar.getAssignInsn();
+			if (assignInsn != null) {
+				assignInsn.add(AFlag.REMOVE);
+			}
+			for (RegisterArg useArg : ssaVar.getUseList()) {
+				InsnNode parentInsn = useArg.getParentInsn();
+				if (parentInsn != null) {
+					parentInsn.add(AFlag.REMOVE);
+				}
+			}
+			mth.removeSVar(ssaVar);
+		}
+
+	}
 	private static void markCodeForRemoval(SwitchData switchData) {
 		MethodNode mth = switchData.getMth();
 		try {
@@ -435,22 +459,13 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			if (hashSwitch instanceof SwitchRegion) {
 				((SwitchRegion) hashSwitch).getHeader().add(AFlag.REMOVE);
 			}
-			RegisterArg numArg = switchData.getNumArg();
-			if (numArg != null) {
-				for (SSAVar ssaVar : numArg.getSVar().getCodeVar().getSsaVars()) {
-					InsnNode assignInsn = ssaVar.getAssignInsn();
-					if (assignInsn != null) {
-						assignInsn.add(AFlag.REMOVE);
-					}
-					for (RegisterArg useArg : ssaVar.getUseList()) {
-						InsnNode parentInsn = useArg.getParentInsn();
-						if (parentInsn != null) {
-							parentInsn.add(AFlag.REMOVE);
-						}
-					}
-					mth.removeSVar(ssaVar);
-				}
-			}
+			// TODO 统一改成从 hashArg 移除 insn？不行，似乎如果 switchInsn 是 Wrap 的话就没有寄存器 arg.
+			//  Test 里的就没有 arg. 另外是否是因为 debug 编译的有所以出 warning 了？似乎不是。。。
+			//  目前不能删除 int i = str.hashCode() 这一行否则出错。先解决一下那个警告再回来看这个
+//			if (switchData.getHashArg() != null) {
+//				toRemoveSsaVar(mth, switchData.getHashArg());
+//			}
+			toRemoveSsaVar(mth, switchData.getNumArg());
 			// keep second switch header, which used as replaced switchRegion header
 			for (InsnNode secondHeader : switchData.getCodeSwitch().getHeader().getInstructions()) {
 				secondHeader.remove(AFlag.REMOVE);
@@ -678,6 +693,28 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		return caseData;
 	}
 
+	private @Nullable InvokeNode getStrHashCodeInvoke(InsnArg arg) {
+		if (arg.isRegister()) {
+			return getStrHashCodeInvokeFromInsn(((RegisterArg) arg).getAssignInsn());
+		}
+		if (arg.isInsnWrap()) {
+			return getStrHashCodeInvokeFromInsn(((InsnWrapArg) arg).getWrapInsn());
+		}
+		return null;
+	}
+
+	private @Nullable InvokeNode getStrHashCodeInvokeFromInsn(@Nullable InsnNode insn) {
+		if (insn == null || insn.getType() != InsnType.INVOKE) {
+			return null;
+		}
+		InvokeNode invInsn = (InvokeNode) insn;
+		MethodInfo callMth = invInsn.getCallMth();
+		if (!callMth.getRawFullId().equals("java.lang.String.hashCode()I")) {
+			return null;
+		}
+		return invInsn;
+	}
+
 	private @Nullable RegisterArg getStrHashCodeArg(InsnArg arg) {
 		if (arg.isRegister()) {
 			return getStrFromInsn(((RegisterArg) arg).getAssignInsn());
@@ -713,6 +750,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		private List<SwitchRegion.CaseInfo> newCases;
 		private SwitchRegion codeSwitch;
 		private RegisterArg numArg;
+		private RegisterArg hashArg; // 存储目标字符串的 hash 的 arg
 
 		private SwitchData(MethodNode mth, IBranchRegion hashSwitch) {
 			this.mth = mth;
@@ -769,6 +807,14 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 
 		public void setNumArg(RegisterArg numArg) {
 			this.numArg = numArg;
+		}
+
+		public RegisterArg getHashArg() {
+			return hashArg;
+		}
+
+		public void setHashArg(RegisterArg hashArg) {
+			this.hashArg = hashArg;
 		}
 	}
 
