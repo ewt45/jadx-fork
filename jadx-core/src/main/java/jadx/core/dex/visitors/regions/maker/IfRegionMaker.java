@@ -29,6 +29,7 @@ import jadx.core.dex.regions.conditions.IfInfo;
 import jadx.core.dex.regions.conditions.IfRegion;
 import jadx.core.dex.regions.loops.LoopRegion;
 import jadx.core.dex.trycatch.ExcHandlerAttr;
+import jadx.core.dex.visitors.regions.SwitchOverStringVisitor;
 import jadx.core.utils.BlockUtils;
 import jadx.core.utils.blocks.BlockSet;
 import jadx.core.utils.exceptions.JadxRuntimeException;
@@ -56,6 +57,10 @@ final class IfRegionMaker {
 		IfInfo currentIf = makeIfInfo(mth, block);
 		if (currentIf == null) {
 			return null;
+		}
+		// read switch string data before if is restructured
+		if (currentIf.getMth().root().getArgs().isRestoreSwitchOverString()) {
+			SwitchOverStringVisitor.preProcessSwitchStringFirstIf(currentIf);
 		}
 		IfInfo mergedIf = mergeNestedIfNodes(currentIf);
 		if (mergedIf != null) {

@@ -33,6 +33,7 @@ import jadx.core.dex.attributes.nodes.RegionRefAttr;
 import jadx.core.dex.attributes.nodes.RenameReasonAttr;
 import jadx.core.dex.attributes.nodes.SkipMethodArgsAttr;
 import jadx.core.dex.attributes.nodes.SpecialEdgeAttr;
+import jadx.core.dex.attributes.nodes.SwitchStringAttr;
 import jadx.core.dex.attributes.nodes.TmpEdgeAttr;
 import jadx.core.dex.nodes.IMethodDetails;
 import jadx.core.dex.trycatch.CatchAttr;
@@ -92,6 +93,7 @@ public final class AType<T extends IJadxAttribute> implements IJadxAttrType<T> {
 	public static final AType<AttrList<SpecialEdgeAttr>> SPECIAL_EDGE = new AType<>();
 	public static final AType<TmpEdgeAttr> TMP_EDGE = new AType<>();
 	public static final AType<TryCatchBlockAttr> TRY_BLOCK = new AType<>();
+	public static final AType<SwitchStringAttr> SWITCH_STRING = new AType<>();
 
 	// block or insn
 	public static final AType<ExcHandlerAttr> EXC_HANDLER = new AType<>();

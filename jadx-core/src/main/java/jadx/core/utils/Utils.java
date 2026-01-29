@@ -503,6 +503,11 @@ public class Utils {
 		return arr != null && arr.length != 0;
 	}
 
+	/** cast obj to {@code T} and return. otherwise null */
+	public @Nullable static <T> T cast(Object obj, Class<T> cls) {
+		return (cls != null && cls.isInstance(obj)) ? cls.cast(obj) : null;
+	}
+
 	public static void checkThreadInterrupt() {
 		if (Thread.currentThread().isInterrupted()) {
 			throw new JadxRuntimeException("Thread interrupted");
