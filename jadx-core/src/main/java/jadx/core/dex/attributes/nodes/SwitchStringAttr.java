@@ -19,7 +19,7 @@ import jadx.core.dex.nodes.BlockNode;
  */
 public class SwitchStringAttr implements IJadxAttribute {
 	private final List<Case> casesOf2ndSwitch = new ArrayList<>();
-	private final BlockNode secondSwitchBlock;
+	private final BlockNode codeSwitchBlock;
 	// stores the target string hash code
 	private RegisterArg targetStrHashArg = null;
 	// stores the target string object
@@ -28,8 +28,8 @@ public class SwitchStringAttr implements IJadxAttribute {
 	// value: case container. contains str.equals() compare and num assign
 	private final Map<Object, BlockNode> strCompareMap = new HashMap<>();
 
-	public SwitchStringAttr(BlockNode secondSwitchBlock) {
-		this.secondSwitchBlock = secondSwitchBlock;
+	public SwitchStringAttr(BlockNode codeSwitchBlock) {
+		this.codeSwitchBlock = codeSwitchBlock;
 	}
 
 	/**
@@ -84,8 +84,8 @@ public class SwitchStringAttr implements IJadxAttribute {
 		return strCompareMap;
 	}
 
-	public BlockNode getSecondSwitchBlock() {
-		return secondSwitchBlock;
+	public BlockNode getCodeSwitchBlock() {
+		return codeSwitchBlock;
 	}
 
 	public static final class Case {
