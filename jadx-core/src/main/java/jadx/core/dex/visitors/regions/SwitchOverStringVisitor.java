@@ -127,7 +127,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 				SwitchStringAttr attr = new SwitchStringAttr(codeSwitch.getHeader());
 				// TODO `processor.collectMergeData` replace `processCase`.
 				// what about case without break?
-//				FirstStageProcessor processor = new FirstStageSwitchProcessor();
+				// FirstStageProcessor processor = new FirstStageSwitchProcessor();
 				for (SwitchRegion.CaseInfo swCaseInfo : hashSwitch2.getCases()) {
 					if (!processCase(mth, switchData, attr, swCaseInfo)) {
 						mth.addWarnComment("Failed to restore switch over string. Please report as a decompilation issue");
