@@ -124,8 +124,12 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 				switchData.setNumArg(numArg);
 				switchData.setStrEqInsns(strEqInsns);
 				switchData.setCases(new ArrayList<>(casesCount));
+				SwitchStringAttr attr = new SwitchStringAttr(codeSwitch.getHeader());
+				// TODO processor.collectMergeData 替换 processCase.
+				//  case 没有 break 的怎么办？
+//				FirstStageProcessor processor = new FirstStageSwitchProcessor();
 				for (SwitchRegion.CaseInfo swCaseInfo : hashSwitch2.getCases()) {
-					if (!processCase(switchData, swCaseInfo)) {
+					if (!processCase(attr, swCaseInfo)) {
 						mth.addWarnComment("Failed to restore switch over string. Please report as a decompilation issue");
 						return false;
 					}
@@ -373,19 +377,19 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		return map;
 	}
 
-	private boolean processCase(SwitchData switchData, SwitchRegion.CaseInfo caseInfo) {
+	private boolean processCase(MethodNode mth, SwitchStringAttr attr, SwitchRegion.CaseInfo caseInfo) {
 		if (caseInfo.isDefaultCase()) {
 			CaseData caseData = new CaseData();
 			caseData.setCode(caseInfo.getContainer());
 			return true;
 		}
 		AtomicBoolean fail = new AtomicBoolean(false);
-		RegionUtils.visitRegions(switchData.getMth(), caseInfo.getContainer(), region -> {
+		RegionUtils.visitRegions(mth, caseInfo.getContainer(), region -> {
 			if (fail.get()) {
 				return false;
 			}
 			if (region instanceof IfRegion) {
-				CaseData caseData = fillCaseData((IfRegion) region, switchData);
+				CaseData caseData = fillCaseData((IfRegion) region, attr);
 				if (caseData == null) {
 					fail.set(true);
 					return false;
@@ -397,7 +401,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		return !fail.get();
 	}
 
-	private @Nullable CaseData fillCaseData(IfRegion ifRegion, SwitchData switchData) {
+	private @Nullable CaseData fillCaseData(IfRegion ifRegion, SwitchStringAttr attr) {
 		IfCondition condition = Objects.requireNonNull(ifRegion.getCondition());
 		boolean neg = false;
 		if (condition.getMode() == IfCondition.Mode.NOT) {
@@ -491,14 +495,14 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		}
 		IfNode hashIfInsn = condition.getCompare().getInsn();
 		BlockNode secondSwitchBlock = BlockUtils.getPathCross(mth, hashIfInsn.getThenBlock(), hashIfInsn.getElseBlock());
-		RegisterArg numArg = getNumArgOf2ndSwitch(secondSwitchBlock);
-		if (secondSwitchBlock == null || numArg == null || secondSwitchBlock.get(AType.SWITCH_STRING) != null) {
+		if (secondSwitchBlock == null || secondSwitchBlock.get(AType.SWITCH_STRING) != null) {
 			return;
 		}
 
 		SwitchStringAttr attr = new SwitchStringAttr(secondSwitchBlock);
 		FirstStageProcessor processor = new FirstStageIfProcessor();
-		if (processor.collectMergeData(mth, hashIfInsn, attr)) {
+		if (processor.initArg(hashIfInsn, attr)
+				&& processor.collectMergeData(mth, hashIfInsn, attr)) {
 			secondSwitchBlock.addAttr(attr);
 		}
 	}
@@ -618,12 +622,17 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		 * collect const strings to be merged to 2nd switch, and corresponding numbers. and some other data.
 		 * return false if it is not a switch over string.
 		 */
-		public boolean collectMergeData(MethodNode mth, IfNode hashIfInsn, SwitchStringAttr attr) {
-			return collectHashCodes(hashIfInsn, attr) && collectConstStrAndNums(mth, attr);
+		public boolean collectMergeData(MethodNode mth, InsnNode startInsn, SwitchStringAttr attr) {
+			return collectHashCodes(startInsn, attr) && collectConstStrAndNums(mth, attr);
+		}
+
+		// TODO 初始化 numArg， strArg, strhashcodearg,
+		public boolean initArg(InsnNode startInsn, SwitchStringAttr attr) {
+			return true;
 		}
 
 		/** traverse 1st if cases to collect str compare containers, targetStrHashArg and targetStrArg. */
-		protected abstract boolean collectHashCodes(IfNode hashIfInsn, SwitchStringAttr attr);
+		protected abstract boolean collectHashCodes(InsnNode startInsn, SwitchStringAttr attr);
 
 		/** traverse all str.equals() insns, collect const strings and their nums in 2nd switch. */
 		protected abstract boolean collectConstStrAndNums(MethodNode mth, SwitchStringAttr attr);
@@ -670,7 +679,11 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 	private static final class FirstStageIfProcessor extends FirstStageProcessor {
 
 		@Override
-		protected boolean collectHashCodes(IfNode hashIfInsn, SwitchStringAttr attr) {
+		protected boolean collectHashCodes(InsnNode startInsn, SwitchStringAttr attr) {
+			IfNode hashIfInsn = Utils.cast(startInsn, IfNode.class);
+			if (hashIfInsn == null) {
+				return false;
+			}
 			RegisterArg targetStrHashArg = null;
 			RegisterArg targetStrArg = null;
 			Map<Object, BlockNode> strCompareMap = attr.getStrCompareMap();
@@ -723,7 +736,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 				}
 				// 1st if end. next is 2nd switch
 				if (afterHashInsn instanceof SwitchInsn) {
-					if (attr.getSecondSwitchBlock() != neHashBranch) {
+					if (attr.getCodeSwitchBlock() != neHashBranch) {
 						return false;
 					}
 					break;
@@ -738,9 +751,8 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 
 		@Override
 		protected boolean collectConstStrAndNums(MethodNode mth, SwitchStringAttr attr) {
-			BlockNode secondSwitchBlock = attr.getSecondSwitchBlock();
+			BlockNode secondSwitchBlock = attr.getCodeSwitchBlock();
 			RegisterArg numArg = getNumArgOf2ndSwitch(secondSwitchBlock);
-			Set<InsnNode> visited = new HashSet<>();
 			for (Map.Entry<Object, BlockNode> entry : attr.getStrCompareMap().entrySet()) {
 				// default case
 				if (entry.getKey() == SwitchRegion.DEFAULT_CASE_KEY) {
@@ -781,6 +793,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 				}
 
 				IfNode currStrIf = strIfInsn;
+				Set<InsnNode> visited = new HashSet<>();
 				while (true) {
 					InvokeNode eqIvkInsn = getStrEqInvokeFromIfInsn(currStrIf);
 					if (eqIvkInsn == null || !visited.add(eqIvkInsn)) {
@@ -819,7 +832,26 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		}
 	}
 
-	private static final class FirstStageSwitchProcessor {
+	private static final class FirstStageSwitchProcessor extends FirstStageProcessor {
+		private final SwitchRegion hashSwitch;
 
+		public FirstStageSwitchProcessor(SwitchRegion hashSwitch) {
+			this.hashSwitch = hashSwitch;
+		}
+
+		@Override
+		protected boolean collectHashCodes(InsnNode startInsn, SwitchStringAttr attr) {
+			SwitchInsn swInsn = Utils.cast(startInsn, SwitchInsn.class);
+			if (swInsn == null) {
+				return false;
+			}
+
+			return true;
+		}
+
+		@Override
+		protected boolean collectConstStrAndNums(MethodNode mth, SwitchStringAttr attr) {
+			return false;
+		}
 	}
 }
