@@ -10,16 +10,23 @@ import org.jetbrains.annotations.NotNull;
 import jadx.api.plugins.input.data.attributes.IJadxAttrType;
 import jadx.api.plugins.input.data.attributes.IJadxAttribute;
 import jadx.core.dex.attributes.AType;
+import jadx.core.dex.attributes.IAttributeNode;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.nodes.BlockNode;
+import jadx.core.dex.nodes.IBranchRegion;
+import jadx.core.dex.nodes.InsnNode;
 
 /**
  * when switch(str) is compiled to smali, the first switch(hashcode) could become ifBlocks.
  * This attr is added to method.
  */
 public class SwitchStringAttr implements IJadxAttribute {
+	private IBranchRegion firstSwitch;
+	private final List<IAttributeNode> toRemove = new ArrayList<>();
+	private Map<InsnNode, String> strEqInsns;
 	private final List<Case> casesOf2ndSwitch = new ArrayList<>();
-	private final BlockNode codeSwitchBlock;
+	private final BlockNode secondSwitchBlock;
+	private RegisterArg numArg;
 	// stores the target string hash code
 	private RegisterArg targetStrHashArg = null;
 	// stores the target string object
@@ -28,8 +35,9 @@ public class SwitchStringAttr implements IJadxAttribute {
 	// value: case container. contains str.equals() compare and num assign
 	private final Map<Object, BlockNode> strCompareMap = new HashMap<>();
 
-	public SwitchStringAttr(BlockNode codeSwitchBlock) {
-		this.codeSwitchBlock = codeSwitchBlock;
+
+	public SwitchStringAttr(BlockNode secondSwitchBlock) {
+		this.secondSwitchBlock = secondSwitchBlock;
 	}
 
 	/**
@@ -60,6 +68,14 @@ public class SwitchStringAttr implements IJadxAttribute {
 		return s.toString();
 	}
 
+	public void setFirstSwitch(IBranchRegion firstSwitch) {
+		this.firstSwitch = firstSwitch;
+	}
+
+	public IBranchRegion getFirstSwitch() {
+		return firstSwitch;
+	}
+
 	public List<Case> getAllCases() {
 		return casesOf2ndSwitch;
 	}
@@ -80,12 +96,32 @@ public class SwitchStringAttr implements IJadxAttribute {
 		this.targetStrArg = targetStrArg;
 	}
 
+	public RegisterArg getNumArg() {
+		return numArg;
+	}
+
+	public void setNumArg(RegisterArg numArg) {
+		this.numArg = numArg;
+	}
+
 	public Map<Object, BlockNode> getStrCompareMap() {
 		return strCompareMap;
 	}
 
-	public BlockNode getCodeSwitchBlock() {
-		return codeSwitchBlock;
+	public BlockNode getSecondSwitchBlock() {
+		return secondSwitchBlock;
+	}
+
+	public List<IAttributeNode> getToRemove() {
+		return toRemove;
+	}
+
+	public void setStrEqInsns(Map<InsnNode, String> strEqInsns) {
+		this.strEqInsns = strEqInsns;
+	}
+
+	public Map<InsnNode, String> getStrEqInsns() {
+		return strEqInsns;
 	}
 
 	public static final class Case {
