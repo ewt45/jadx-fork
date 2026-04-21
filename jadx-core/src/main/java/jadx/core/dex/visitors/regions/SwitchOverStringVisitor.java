@@ -56,6 +56,7 @@ import jadx.core.utils.exceptions.JadxException;
 		runBefore = ReturnVisitor.class
 )
 public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionIterativeVisitor {
+	private static final Integer DEFAULT_NUM_VALUE = -1;
 
 	@Override
 	public void visit(MethodNode mth) throws JadxException {
@@ -91,12 +92,17 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 				// one 'hashCode' invoke and at least one 'equals' per case
 				return false;
 			}
+			IContainer nextContainer = RegionUtils.getNextContainer(mth, switchRegion);
+			if (!(nextContainer instanceof SwitchRegion)) {
+				return false;
+			}
 			// quick checks done, start collecting data to create a new switch region
 			Map<InsnNode, String> strEqInsns = collectEqualsInsns(mth, strVar);
 			if (strEqInsns.size() < casesWithString) {
 				return false;
 			}
 			SwitchData switchData = new SwitchData(mth, switchRegion);
+			switchData.setCodeSwitch((SwitchRegion) nextContainer);
 			switchData.setStrEqInsns(strEqInsns);
 			switchData.setCases(new ArrayList<>(casesCount));
 			for (SwitchRegion.CaseInfo swCaseInfo : switchRegion.getCases()) {
@@ -165,11 +171,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 
 	private boolean mergeWithCode(SwitchData switchData) {
 		// check for second switch
-		IContainer nextContainer = RegionUtils.getNextContainer(switchData.getMth(), switchData.getSwitchRegion());
-		if (!(nextContainer instanceof SwitchRegion)) {
-			return false;
-		}
-		SwitchRegion codeSwitch = (SwitchRegion) nextContainer;
+		SwitchRegion codeSwitch = switchData.getCodeSwitch();
 		InsnNode swInsn = BlockUtils.getLastInsnWithType(codeSwitch.getHeader(), InsnType.SWITCH);
 		if (swInsn == null || !swInsn.getArg(0).isRegister()) {
 			return false;
@@ -209,46 +211,31 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		}
 
 		List<SwitchRegion.CaseInfo> newCases = new ArrayList<>();
+		SwitchRegion.CaseInfo newDefaultCase = null;
 		for (SwitchRegion.CaseInfo caseInfo : codeSwitch.getCases()) {
-			SwitchRegion.CaseInfo newCase = null;
+			SwitchRegion.CaseInfo newCase = new SwitchRegion.CaseInfo(new ArrayList<>(caseInfo.getKeys().size()), caseInfo.getContainer());
 			for (Object key : caseInfo.getKeys()) {
-				Integer intKey = unwrapIntKey(key);
-				if (intKey != null) {
+				Integer intKey = (key == SwitchRegion.DEFAULT_CASE_KEY) ? DEFAULT_NUM_VALUE : unwrapIntKey(key);
+				if (!DEFAULT_NUM_VALUE.equals(intKey)) {
 					CaseData caseData = casesMap.remove(intKey);
 					if (caseData == null) {
 						return false;
 					}
-					if (newCase == null) {
-						List<Object> keys = new ArrayList<>(caseData.getStrValues());
-						newCase = new SwitchRegion.CaseInfo(keys, caseInfo.getContainer());
-					} else {
-						// merge cases
+					newCase.getKeys().addAll(caseData.getStrValues());
+				} else {
+					// last case. add all remaining strings
+					newDefaultCase = newCase;
+					for (CaseData caseData : casesMap.values()) {
 						newCase.getKeys().addAll(caseData.getStrValues());
 					}
-				} else if (key == SwitchRegion.DEFAULT_CASE_KEY) {
-					var iterator = casesMap.entrySet().iterator();
-					while (iterator.hasNext()) {
-						CaseData caseData = iterator.next().getValue();
-						if (newCase == null) {
-							List<Object> keys = new ArrayList<>(caseData.getStrValues());
-							newCase = new SwitchRegion.CaseInfo(keys, caseInfo.getContainer());
-						} else {
-							// merge cases
-							newCase.getKeys().addAll(caseData.getStrValues());
-						}
-						iterator.remove();
-					}
-					if (newCase == null) {
-						newCase = new SwitchRegion.CaseInfo(new ArrayList<>(), caseInfo.getContainer());
-					}
 					newCase.getKeys().add(SwitchRegion.DEFAULT_CASE_KEY);
-				} else {
-					return false;
 				}
 			}
 			newCases.add(newCase);
 		}
-		switchData.setCodeSwitch(codeSwitch);
+		if (newDefaultCase == null) {
+			return false;
+		}
 		switchData.setNumArg(numArg);
 		switchData.setNewCases(newCases);
 		return true;
