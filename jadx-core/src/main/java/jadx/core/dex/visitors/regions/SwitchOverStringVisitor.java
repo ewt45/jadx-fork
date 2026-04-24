@@ -6,6 +6,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -114,7 +115,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 
 			IContainer nextContainer = RegionUtils.getNextContainer(mth, part1Region);
 			if (nextContainer instanceof SwitchRegion) {
-				data.setType(part1Region instanceof IfRegion ? SwitchStringType.IF_SWITCH : SwitchStringType.SWITCH_SWITCH);
+				data.setType(part1Region instanceof SwitchRegion ? SwitchStringType.SWITCH_SWITCH : SwitchStringType.IF_SWITCH);
 				data.setPart2Region((SwitchRegion) nextContainer);
 			} else {
 				data.setType(SwitchStringType.SINGLE_SWITCH);
@@ -151,14 +152,61 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 	 * @return false if it isn't switch string pattern
 	 */
 	private boolean validatePart1Region(SwitchData data) {
+		// TODO 提取出一个 map
+		// hashcode keys and case blocks
+		Map<Integer, BlockNode> hashCases = new LinkedHashMap<>();
 		if (data.getType() == SwitchStringType.IF_SWITCH) {
-			throw new RuntimeException("stub");
+			IfRegion part1If = (IfRegion) data.getPart1Region();
+			BlockNode part2Header = Objects.requireNonNull(data.getPart2Region()).getHeader();
+			RegisterArg strHashArg = null;
+			BlockNode ifStartBlock = part1If.getConditionBlocks().get(0);
+			BlockNode hashCmpBlock = getOnlyOneInsnBlock(ifStartBlock);
+			do {
+				IfNode ifNode = (IfNode) BlockUtils.getLastInsnWithType(hashCmpBlock, InsnType.IF);
+				if (ifNode == null || (ifNode.getOp() != IfOp.NE && ifNode.getOp() != IfOp.EQ)) {
+					return false;
+				}
+				boolean isNE = ifNode.getOp() == IfOp.NE;
+				BlockNode thenBlock = getOnlyOneInsnBlock(isNE ? ifNode.getElseBlock() : ifNode.getThenBlock());
+				BlockNode elseBlock = getOnlyOneInsnBlock(isNE ? ifNode.getThenBlock() : ifNode.getElseBlock());
+				if (thenBlock == null || elseBlock == null || !ifNode.getArg(0).isRegister() || !ifNode.getArg(1).isLiteral()) {
+					return false;
+				}
+				RegisterArg tmpStrHashArg = (RegisterArg) ifNode.getArg(0);
+				LiteralArg literalArg = (LiteralArg) ifNode.getArg(1);
+				if (strHashArg == null) {
+					strHashArg = tmpStrHashArg;
+				} else if (!strHashArg.sameCodeVar(tmpStrHashArg)) {
+					return false;
+				}
+				hashCases.put((int) literalArg.getLiteral(), thenBlock);
+				hashCmpBlock = elseBlock;
+				// end of part1If: no further hash compare, next block is part2switch
+				Integer fallbackNum = extractConstNumber(data, BlockUtils.getLastInsn(hashCmpBlock));
+				BlockNode nextBlock = BlockUtils.getNextBlock(hashCmpBlock);
+				if (elseBlock == part2Header || (DEFAULT_NUM_VALUE.equals(fallbackNum) && nextBlock == part2Header)) {
+					break;
+				}
+			} while (true);
+		} else {
+			SwitchRegion part1Switch = (SwitchRegion) data.getPart1Region();
+			SwitchInsn swInsn = Objects.requireNonNull((SwitchInsn) BlockUtils.getLastInsnWithType(part1Switch.getHeader(), InsnType.SWITCH));
+			for (int i = 0; i < swInsn.getKeys().length; i++) {
+				BlockNode caseBlock = getOnlyOneInsnBlock(swInsn.getTargetBlocks()[i]);
+				if (caseBlock == null) {
+					return false;
+				}
+				hashCases.put(swInsn.getKeys()[i], caseBlock);
+			}
 		}
-		SwitchRegion part1Switch = (SwitchRegion) data.getPart1Region();
-		SwitchInsn swInsn = Objects.requireNonNull((SwitchInsn) BlockUtils.getLastInsnWithType(part1Switch.getHeader(), InsnType.SWITCH));
-		for (int i = 0; i < swInsn.getKeys().length; i++) {
-			int hashcode = swInsn.getKeys()[i];
-			BlockNode caseBlock = getOnlyOneInsnBlock(swInsn.getTargetBlocks()[i]);
+
+
+
+
+
+
+		for (Integer hashcode : hashCases.keySet()) {
+			BlockNode caseBlock = hashCases.get(hashcode);
 			IfNode ifStrEqualsInsn = (IfNode) BlockUtils.getLastInsnWithType(caseBlock, InsnType.IF);
 			if (!isIfStringEqualsInsn(ifStrEqualsInsn)) {
 				return false;
@@ -211,7 +259,6 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 	 * SINGLE_SWITCH: create cases according to part1Region, replace keys with strings.
 	 */
 	private boolean prepareMergedSwitchCases(SwitchData data) {
-		SwitchRegion part1Region = (SwitchRegion) data.getPart1Region();
 		SwitchRegion part2Region = data.getPart2Region();
 		List<CaseData> cases = data.getCases();
 		List<SwitchRegion.CaseInfo> newCases = new ArrayList<>();
@@ -244,7 +291,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 				}
 				newCases.add(newCase);
 			}
-			if (newDefaultCase == null) {
+			if (newDefaultCase == null && !casesMap.isEmpty()) {
 				return false;
 			}
 		} else if (data.getType() == SwitchStringType.SINGLE_SWITCH){
@@ -253,6 +300,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			for (CaseData caseData : cases) {
 				casesMap.computeIfAbsent(caseData.getCode(), v -> new ArrayList<>()).add(caseData.getStrValue());
 			}
+			SwitchRegion part1Region = (SwitchRegion) data.getPart1Region();
 			SwitchInsn swInsn = (SwitchInsn) BlockUtils.getLastInsnWithType(part1Region.getHeader(), InsnType.SWITCH);
 			BlockNode defBlock = Objects.requireNonNull(swInsn).getDefTargetBlock();
 			if (defBlock != null) {
