@@ -216,8 +216,8 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 	}
 
 	/**
-	 * SWITCH_SWITCH/IF_SWITCH: create cases according to part2Region (switch), replace keys with strings.
-	 * SINGLE_SWITCH: create cases according to part1Region, replace keys with strings.
+	 * create cases according to part2Region (part1Region if is SINGLE_SWITCH).
+	 * replace keys with strings.
 	 */
 	private boolean prepareMergedSwitchCases(SwitchData data) {
 		SwitchRegion part2Region = data.getPart2Region();
@@ -274,13 +274,13 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 				}
 				newCases.add(new SwitchRegion.CaseInfo(casesMap.get(code), codeRegion));
 			}
-			// make sure default is the last one
-			SwitchRegion.CaseInfo newDefaultCase = ListUtils.filterOnlyOne(newCases,
-					info -> info.getKeys().contains(SwitchRegion.DEFAULT_CASE_KEY));
-			if (newDefaultCase != null) {
-				newCases.remove(newDefaultCase);
-				newCases.add(newDefaultCase);
-			}
+		}
+		// make sure default case is the last one
+		SwitchRegion.CaseInfo newDefaultCase = ListUtils.filterOnlyOne(newCases,
+				info -> info.getKeys().contains(SwitchRegion.DEFAULT_CASE_KEY));
+		if (newDefaultCase != null) {
+			newCases.remove(newDefaultCase);
+			newCases.add(newDefaultCase);
 		}
 		return true;
 	}
@@ -342,18 +342,6 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 					mth.removeSVar(ssaVar);
 				}
 			}
-//			data.getStrArg().getSVar().getUseList().stream()
-//					.map(InsnArg::getParentInsn)
-//					.filter(insn -> InsnUtils.isInsnType(insn, InsnType.INVOKE))
-//					.map(InvokeNode.class::cast)
-//					.filter(insn -> insn.getCallMth().getRawFullId().equals("java.lang.String.hashCode()I"))
-//					.filter(insn -> insn.getResult().getSVar().getUseList().stream()
-//							.allMatch(arg -> arg.getParentInsn() == null || arg.getParentInsn().contains(AFlag.REMOVE)))
-//					.forEach(insn -> {
-//							insn.add(AFlag.REMOVE);
-//							mth.removeSVar(insn.getResult().getSVar());
-//							insn.getResult().resetSSAVar();
-//					});
 			InsnRemover.removeAllMarked(mth);
 			InsnRemover.remove(mth, data.getHashcodeInvokeInsn());
 		} catch (StackOverflowError | Exception e) {
