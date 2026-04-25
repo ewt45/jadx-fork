@@ -39,7 +39,6 @@ import jadx.core.dex.visitors.JadxVisitor;
 import jadx.core.utils.BlockUtils;
 import jadx.core.utils.InsnRemover;
 import jadx.core.utils.InsnUtils;
-import jadx.core.utils.ListUtils;
 import jadx.core.utils.RegionUtils;
 import jadx.core.utils.exceptions.JadxException;
 
@@ -116,7 +115,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 	 * - case key is hashcode of strValue
 	 * - str compare thenBlock is num assign (SWITCH_SWITCH and IF_SWITCH)
 	 */
-	private boolean collectPart1RegionCases(SwitchData data) {
+	private static boolean collectPart1RegionCases(SwitchData data) {
 		// a map of hashcode keys and case blocks
 		Map<Integer, BlockNode> hashCases = new LinkedHashMap<>();
 		if (data.getType() == SwitchStringType.IF_SWITCH) {
@@ -154,7 +153,8 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			} while (true);
 		} else {
 			SwitchRegion part1Switch = (SwitchRegion) data.getPart1Region();
-			SwitchInsn swInsn = Objects.requireNonNull((SwitchInsn) BlockUtils.getLastInsnWithType(part1Switch.getHeader(), InsnType.SWITCH));
+			SwitchInsn swInsn = (SwitchInsn) BlockUtils.getLastInsnWithType(part1Switch.getHeader(), InsnType.SWITCH);
+			Objects.requireNonNull(swInsn);
 			for (int i = 0; i < swInsn.getKeys().length; i++) {
 				BlockNode caseBlock = getOnlyOneInsnBlock(swInsn.getTargetBlocks()[i]);
 				if (caseBlock == null) {
@@ -206,7 +206,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 					}
 				}
 				// store str and num assign in switchData
-				data.getCases().add(new CaseData((String) strValue, numValue, thenBlock));
+				data.getCases().add(new CaseData(strValue, numValue, thenBlock));
 				// there may be more string compare (same hashcode)
 				BlockNode nextIfBlock = getOnlyOneInsnBlock(elseBlock);
 				ifStrEqualsInsn = (IfNode) BlockUtils.getLastInsnWithType(nextIfBlock, InsnType.IF);
@@ -219,7 +219,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 	 * create cases according to part2Region (part1Region if is SINGLE_SWITCH).
 	 * replace keys with strings.
 	 */
-	private boolean prepareMergedSwitchCases(SwitchData data) {
+	private static boolean prepareMergedSwitchCases(SwitchData data) {
 		SwitchRegion part2Region = data.getPart2Region();
 		List<CaseData> cases = data.getCases();
 		List<SwitchRegion.CaseInfo> newCases = new ArrayList<>();
@@ -230,7 +230,6 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			for (CaseData caseData : cases) {
 				casesMap.computeIfAbsent(caseData.getCodeNum(), v -> new ArrayList<>()).add(caseData.getStrValue());
 			}
-			SwitchRegion.CaseInfo newDefaultCase = null;
 			for (SwitchRegion.CaseInfo caseInfo : Objects.requireNonNull(part2Region).getCases()) {
 				SwitchRegion.CaseInfo newCase = new SwitchRegion.CaseInfo(new ArrayList<>(), caseInfo.getContainer());
 				for (Object key : caseInfo.getKeys()) {
@@ -243,44 +242,41 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 						newCase.getKeys().addAll(strings);
 					} else {
 						// last case. add all remaining strings
-						newDefaultCase = newCase;
 						for (List<Object> strings : casesMap.values()) {
 							newCase.getKeys().addAll(strings);
 						}
+						casesMap.clear();
 						newCase.getKeys().add(SwitchRegion.DEFAULT_CASE_KEY);
 					}
 				}
 				newCases.add(newCase);
 			}
-			if (newDefaultCase == null && !casesMap.isEmpty()) {
-				return false;
+			if (!casesMap.isEmpty()) {
+				data.getMth().addWarnComment("switch over string: strings are not added: " + casesMap.values());
 			}
-		} else if (data.getType() == SwitchStringType.SINGLE_SWITCH){
-			// group by block
-			Map<BlockNode, List<Object>> casesMap = new HashMap<>(cases.size());
-			for (CaseData caseData : cases) {
-				casesMap.computeIfAbsent(caseData.getCode(), v -> new ArrayList<>()).add(caseData.getStrValue());
-			}
+		} else if (data.getType() == SwitchStringType.SINGLE_SWITCH) {
 			SwitchRegion part1Region = (SwitchRegion) data.getPart1Region();
 			SwitchInsn swInsn = (SwitchInsn) BlockUtils.getLastInsnWithType(part1Region.getHeader(), InsnType.SWITCH);
 			BlockNode defBlock = Objects.requireNonNull(swInsn).getDefTargetBlock();
 			if (defBlock != null) {
-				casesMap.computeIfAbsent(defBlock, v -> new ArrayList<>()).add(SwitchRegion.DEFAULT_CASE_KEY);
+				cases.add(new CaseData(SwitchRegion.DEFAULT_CASE_KEY, DEFAULT_NUM_VALUE, defBlock));
 			}
-			for (BlockNode code : casesMap.keySet()) {
-				IContainer codeRegion = RegionUtils.getBlockContainer(data.getPart1Region(), code);
-				if (codeRegion == null) {
-					return false;
+			CaseData lastCaseData = null;
+			for (CaseData caseData : cases) {
+				if (lastCaseData != null && lastCaseData.getCode() == caseData.getCode()) {
+					// combine cases whose blocks are the same
+					newCases.getLast().getKeys().add(caseData.getStrValue());
+				} else {
+					List<Object> keys = new ArrayList<>();
+					keys.add(caseData.getStrValue());
+					IContainer container = RegionUtils.getBlockContainer(part1Region, caseData.getCode());
+					if (container == null) {
+						return false;
+					}
+					newCases.add(new SwitchRegion.CaseInfo(keys, container));
 				}
-				newCases.add(new SwitchRegion.CaseInfo(casesMap.get(code), codeRegion));
+				lastCaseData = caseData;
 			}
-		}
-		// make sure default case is the last one
-		SwitchRegion.CaseInfo newDefaultCase = ListUtils.filterOnlyOne(newCases,
-				info -> info.getKeys().contains(SwitchRegion.DEFAULT_CASE_KEY));
-		if (newDefaultCase != null) {
-			newCases.remove(newDefaultCase);
-			newCases.add(newDefaultCase);
 		}
 		return true;
 	}
@@ -385,7 +381,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		} else if (arg.isInsnWrap()) {
 			insn = ((InsnWrapArg) arg).getWrapInsn();
 		}
-		if (insn != null && insn.getType() == InsnType.INVOKE){
+		if (insn != null && insn.getType() == InsnType.INVOKE) {
 			InvokeNode invInsn = (InvokeNode) insn;
 			if (invInsn.getCallMth().getRawFullId().equals("java.lang.String.hashCode()I")) {
 				return invInsn;
@@ -500,17 +496,17 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 	}
 
 	private static final class CaseData {
-		private final String strValue;
+		private final Object strValue;
 		private final BlockNode code;
 		private final Integer codeNum;
 
-		private CaseData(String strValue, Integer codeNum, BlockNode code) {
+		private CaseData(Object strValue, Integer codeNum, BlockNode code) {
 			this.strValue = strValue;
 			this.code = code;
 			this.codeNum = codeNum;
 		}
 
-		public String getStrValue() {
+		public Object getStrValue() {
 			return strValue;
 		}
 
