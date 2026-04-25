@@ -1,11 +1,8 @@
 package jadx.core.dex.visitors.regions;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.IdentityHashMap;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -17,10 +14,8 @@ import jadx.api.plugins.input.data.annotations.EncodedType;
 import jadx.api.plugins.input.data.annotations.EncodedValue;
 import jadx.api.plugins.input.data.attributes.JadxAttrType;
 import jadx.core.dex.attributes.AFlag;
-import jadx.core.dex.attributes.IAttributeNode;
 import jadx.core.dex.attributes.nodes.CodeFeaturesAttr;
 import jadx.core.dex.attributes.nodes.CodeFeaturesAttr.CodeFeature;
-import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.instructions.IfNode;
 import jadx.core.dex.instructions.IfOp;
 import jadx.core.dex.instructions.InsnType;
@@ -75,63 +70,34 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 
 	private boolean restoreSwitchOverString(MethodNode mth, IRegion part1Region) {
 		try {
-			RegisterArg strArg;
-			if (part1Region instanceof SwitchRegion) {
-				SwitchRegion part1Switch = (SwitchRegion) part1Region;
-				InsnNode swInsn = BlockUtils.getLastInsnWithType(part1Switch.getHeader(), InsnType.SWITCH);
-				if (swInsn == null) {
-					return false;
-				}
-				strArg = getStrHashCodeArg(swInsn.getArg(0));
-				if (strArg == null) {
-					return false;
-				}
-				int casesCount = part1Switch.getCases().size();
-				boolean defaultCaseAdded = part1Switch.getCases().stream().anyMatch(SwitchRegion.CaseInfo::isDefaultCase);
-				int casesWithString = defaultCaseAdded ? casesCount - 1 : casesCount;
-				SSAVar strVar = strArg.getSVar();
-				if (strVar.getUseCount() - 1 < casesWithString) {
-					// one 'hashCode' invoke and at least one 'equals' per case
-					return false;
-				}
-			} else if (part1Region instanceof IfRegion) {
-				BlockNode ifBlock = RegionUtils.getFirstBlockNode(part1Region);
-				InsnNode ifInsn = BlockUtils.getLastInsnWithType(ifBlock, InsnType.IF);
-				if (ifInsn == null) {
-					return false;
-				}
-				strArg = getStrHashCodeArg(ifInsn.getArg(0));
-				if (strArg == null) {
-					return false;
-				}
-			} else {
+			InsnNode strHashInsn = BlockUtils.getLastInsn(RegionUtils.getFirstBlockNode(part1Region));
+			InvokeNode hashcodeInv = strHashInsn == null ? null : getStrHashcodeInvokeInsn(strHashInsn.getArg(0));
+			InsnArg strArg = hashcodeInv == null ? null : hashcodeInv.getInstanceArg();
+			if (strArg == null || !strArg.isRegister()) {
 				return false;
 			}
 
-			// TODO SwitchData 改为单例
 			SwitchData data = new SwitchData(mth, part1Region);
-			data.setCases(new ArrayList<>());
-			data.setStrArg(strArg);
+			data.setHashcodeInvokeInsn(hashcodeInv);
+			data.setStrArg((RegisterArg) strArg);
 
 			IContainer nextContainer = RegionUtils.getNextContainer(mth, part1Region);
 			if (nextContainer instanceof SwitchRegion) {
+				SwitchRegion part2Region = (SwitchRegion) nextContainer;
+				InsnNode part2SwInsn = BlockUtils.getLastInsnWithType(part2Region.getHeader(), InsnType.SWITCH);
+				if (part2SwInsn == null || !part2SwInsn.getArg(0).isRegister()) {
+					return false;
+				}
 				data.setType(part1Region instanceof SwitchRegion ? SwitchStringType.SWITCH_SWITCH : SwitchStringType.IF_SWITCH);
-				data.setPart2Region((SwitchRegion) nextContainer);
+				data.setPart2Region(part2Region);
+				data.setNumArg((RegisterArg) part2SwInsn.getArg(0));
 			} else {
 				data.setType(SwitchStringType.SINGLE_SWITCH);
 			}
-			if (data.getType() == SwitchStringType.SWITCH_SWITCH || data.getType() == SwitchStringType.IF_SWITCH) {
-				InsnNode codeSwInsn = BlockUtils.getLastInsnWithType(((SwitchRegion) nextContainer).getHeader(), InsnType.SWITCH);
-				if (codeSwInsn == null || !codeSwInsn.getArg(0).isRegister()) {
-					return false;
-				}
-				data.setNumArg((RegisterArg) codeSwInsn.getArg(0));
-			}
 
-			if (!validatePart1Region(data)) {
+			if (!collectPart1RegionCases(data)) {
 				return false;
 			}
-
 			if (!prepareMergedSwitchCases(data) || !replaceWithMergedSwitch(data)) {
 				mth.addWarnComment("Failed to restore switch over string. Please report as a decompilation issue");
 				return false;
@@ -144,16 +110,14 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 	}
 
 	/**
-	 * store str and num assign in switchData.getCases()
+	 * store str and num/caseBlock in switchData
 	 * validate:
-	 * 1. case block is str.equals compare
-	 * 2. case key is hashcode of strValue
-	 * 3. compare then is num assign if SWITCH_SWITCH or IF_SWITCH
-	 * @return false if it isn't switch string pattern
+	 * - case block is str.equals compare
+	 * - case key is hashcode of strValue
+	 * - str compare thenBlock is num assign (SWITCH_SWITCH and IF_SWITCH)
 	 */
-	private boolean validatePart1Region(SwitchData data) {
-		// TODO 提取出一个 map
-		// hashcode keys and case blocks
+	private boolean collectPart1RegionCases(SwitchData data) {
+		// a map of hashcode keys and case blocks
 		Map<Integer, BlockNode> hashCases = new LinkedHashMap<>();
 		if (data.getType() == SwitchStringType.IF_SWITCH) {
 			IfRegion part1If = (IfRegion) data.getPart1Region();
@@ -200,11 +164,8 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			}
 		}
 
-
-
-
-
-
+		// save to switchData
+		data.setCases(new ArrayList<>(hashCases.size()));
 		for (Integer hashcode : hashCases.keySet()) {
 			BlockNode caseBlock = hashCases.get(hashcode);
 			IfNode ifStrEqualsInsn = (IfNode) BlockUtils.getLastInsnWithType(caseBlock, InsnType.IF);
@@ -364,10 +325,10 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			}
 			removeInsns.removeAll(keptInsns);
 			removeInsns.forEach(i -> i.add(AFlag.REMOVE));
+			// may be assigned before 1st region
 			RegisterArg numArg = data.getNumArg();
 			if (numArg != null) {
 				for (SSAVar ssaVar : numArg.getSVar().getCodeVar().getSsaVars()) {
-					// num value is assigned before 1st region
 					InsnNode assignInsn = ssaVar.getAssignInsn();
 					if (assignInsn != null) {
 						assignInsn.add(AFlag.REMOVE);
@@ -381,14 +342,27 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 					mth.removeSVar(ssaVar);
 				}
 			}
+//			data.getStrArg().getSVar().getUseList().stream()
+//					.map(InsnArg::getParentInsn)
+//					.filter(insn -> InsnUtils.isInsnType(insn, InsnType.INVOKE))
+//					.map(InvokeNode.class::cast)
+//					.filter(insn -> insn.getCallMth().getRawFullId().equals("java.lang.String.hashCode()I"))
+//					.filter(insn -> insn.getResult().getSVar().getUseList().stream()
+//							.allMatch(arg -> arg.getParentInsn() == null || arg.getParentInsn().contains(AFlag.REMOVE)))
+//					.forEach(insn -> {
+//							insn.add(AFlag.REMOVE);
+//							mth.removeSVar(insn.getResult().getSVar());
+//							insn.getResult().resetSSAVar();
+//					});
 			InsnRemover.removeAllMarked(mth);
+			InsnRemover.remove(mth, data.getHashcodeInvokeInsn());
 		} catch (StackOverflowError | Exception e) {
 			mth.addWarnComment("Failed to clean up code after switch over string restore", e);
 		}
 		return true;
 	}
 
-	private @Nullable Integer extractConstNumber(SwitchData switchData, @Nullable InsnNode numInsn) {
+	private static @Nullable Integer extractConstNumber(SwitchData switchData, @Nullable InsnNode numInsn) {
 		if (numInsn == null || numInsn.getArgsCount() != 1) {
 			return null;
 		}
@@ -402,7 +376,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		return null;
 	}
 
-	private Integer unwrapIntKey(Object key) {
+	private static Integer unwrapIntKey(Object key) {
 		if (key instanceof Integer) {
 			return (Integer) key;
 		}
@@ -416,30 +390,20 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		return null;
 	}
 
-	private @Nullable RegisterArg getStrHashCodeArg(InsnArg arg) {
+	private static @Nullable InvokeNode getStrHashcodeInvokeInsn(InsnArg arg) {
+		InsnNode insn = null;
 		if (arg.isRegister()) {
-			return getStrFromInsn(((RegisterArg) arg).getAssignInsn());
+			insn = ((RegisterArg) arg).getAssignInsn();
+		} else if (arg.isInsnWrap()) {
+			insn = ((InsnWrapArg) arg).getWrapInsn();
 		}
-		if (arg.isInsnWrap()) {
-			return getStrFromInsn(((InsnWrapArg) arg).getWrapInsn());
+		if (insn != null && insn.getType() == InsnType.INVOKE){
+			InvokeNode invInsn = (InvokeNode) insn;
+			if (invInsn.getCallMth().getRawFullId().equals("java.lang.String.hashCode()I")) {
+				return invInsn;
+			}
 		}
 		return null;
-	}
-
-	private @Nullable RegisterArg getStrFromInsn(@Nullable InsnNode insn) {
-		if (insn == null || insn.getType() != InsnType.INVOKE) {
-			return null;
-		}
-		InvokeNode invInsn = (InvokeNode) insn;
-		MethodInfo callMth = invInsn.getCallMth();
-		if (!callMth.getRawFullId().equals("java.lang.String.hashCode()I")) {
-			return null;
-		}
-		InsnArg arg = invInsn.getInstanceArg();
-		if (arg == null || !arg.isRegister()) {
-			return null;
-		}
-		return (RegisterArg) arg;
 	}
 
 	private static boolean isIfStringEqualsInsn(InsnNode ifInsn) {
@@ -475,6 +439,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		private List<SwitchRegion.CaseInfo> newCases;
 		private RegisterArg numArg;
 		private RegisterArg strArg;
+		private InsnNode hashcodeInvokeInsn;
 
 		private SwitchData(MethodNode mth, IRegion part1Region) {
 			this.mth = mth;
@@ -535,6 +500,14 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 
 		public void setStrArg(RegisterArg strArg) {
 			this.strArg = strArg;
+		}
+
+		public InsnNode getHashcodeInvokeInsn() {
+			return hashcodeInvokeInsn;
+		}
+
+		public void setHashcodeInvokeInsn(InsnNode hashcodeInvokeInsn) {
+			this.hashcodeInvokeInsn = hashcodeInvokeInsn;
 		}
 	}
 
