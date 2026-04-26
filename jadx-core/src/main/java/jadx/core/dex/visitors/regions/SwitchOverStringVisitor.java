@@ -82,17 +82,21 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			data.setStrArg((RegisterArg) strArg);
 
 			IContainer nextContainer = RegionUtils.getNextContainer(mth, part1Region);
-			if (nextContainer instanceof SwitchRegion) {
+			boolean isPart1Switch = part1Region instanceof SwitchRegion;
+			boolean isPart2Switch = nextContainer instanceof SwitchRegion;
+			if (isPart2Switch) {
 				SwitchRegion part2Region = (SwitchRegion) nextContainer;
 				InsnNode part2SwInsn = BlockUtils.getLastInsnWithType(part2Region.getHeader(), InsnType.SWITCH);
 				if (part2SwInsn == null || !part2SwInsn.getArg(0).isRegister()) {
 					return false;
 				}
-				data.setType(part1Region instanceof SwitchRegion ? SwitchStringType.SWITCH_SWITCH : SwitchStringType.IF_SWITCH);
+				data.setType(isPart1Switch ? SwitchStringType.SWITCH_SWITCH : SwitchStringType.IF_SWITCH);
 				data.setPart2Region(part2Region);
 				data.setNumArg((RegisterArg) part2SwInsn.getArg(0));
-			} else {
+			} else if (isPart1Switch) {
 				data.setType(SwitchStringType.SINGLE_SWITCH);
+			} else {
+				return false;
 			}
 
 			if (!collectPart1RegionCases(data)) {
