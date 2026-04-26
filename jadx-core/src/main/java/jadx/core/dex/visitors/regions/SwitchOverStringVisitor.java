@@ -39,6 +39,7 @@ import jadx.core.dex.visitors.JadxVisitor;
 import jadx.core.utils.BlockUtils;
 import jadx.core.utils.InsnRemover;
 import jadx.core.utils.InsnUtils;
+import jadx.core.utils.ListUtils;
 import jadx.core.utils.RegionUtils;
 import jadx.core.utils.exceptions.JadxException;
 
@@ -265,7 +266,8 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			for (CaseData caseData : cases) {
 				if (lastCaseData != null && lastCaseData.getCode() == caseData.getCode()) {
 					// combine cases whose blocks are the same
-					newCases.getLast().getKeys().add(caseData.getStrValue());
+					SwitchRegion.CaseInfo lastInfo = ListUtils.last(newCases);
+					Objects.requireNonNull(lastInfo).getKeys().add(caseData.getStrValue());
 				} else {
 					List<Object> keys = new ArrayList<>();
 					keys.add(caseData.getStrValue());
