@@ -227,7 +227,10 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		return true;
 	}
 
-	/** create cases according to part2Region (part1Region if is SINGLE_SWITCH). replace keys with strings. */
+	/**
+	 * create cases according to part2Region (part1Region if is SINGLE_SWITCH).
+	 * replace keys with strings.
+	 */
 	private static boolean prepareMergedSwitchCases(SwitchData data) {
 		SwitchRegion part2Region = data.getPart2Region();
 		List<CaseData> cases = data.getCases();
