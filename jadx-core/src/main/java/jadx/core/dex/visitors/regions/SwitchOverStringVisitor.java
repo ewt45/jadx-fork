@@ -43,6 +43,12 @@ import jadx.core.utils.ListUtils;
 import jadx.core.utils.RegionUtils;
 import jadx.core.utils.exceptions.JadxException;
 
+/**
+ * A switch(string) java code will be compiled to two switches in class code.
+ * Sometimes, android's d8/r8 will make some further modification.
+ * 1st switch could be changed to ifs to reduce size of dex.
+ * 2nd switch could be flattened and removed if there are many cases using a same block.
+ */
 @JadxVisitor(
 		name = "SwitchOverStringVisitor",
 		desc = "Restore switch over string",
@@ -116,8 +122,8 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 	/**
 	 * store str and num/caseBlock in switchData
 	 * validate:
-	 * - case block is str.equals compare
 	 * - case key is hashcode of strValue
+	 * - case block is str.equals compare
 	 * - str compare thenBlock is num assign (SWITCH_SWITCH and IF_SWITCH)
 	 */
 	private static boolean collectPart1RegionCases(SwitchData data) {
@@ -178,7 +184,8 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 				return false;
 			}
 			do {
-				InsnNode strEqualsInsn = Objects.requireNonNull(InsnUtils.getWrappedInsn(ifStrEqualsInsn.getArg(0)));
+				InsnNode strEqualsInsn = InsnUtils.getWrappedInsn(ifStrEqualsInsn.getArg(0));
+				Objects.requireNonNull(strEqualsInsn);
 				InsnArg strArg = strEqualsInsn.getArg(0);
 				InsnArg valArg = strEqualsInsn.getArg(1);
 				Object strValue = InsnUtils.getConstValueByArg(data.getMth().root(), valArg);
@@ -220,10 +227,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		return true;
 	}
 
-	/**
-	 * create cases according to part2Region (part1Region if is SINGLE_SWITCH).
-	 * replace keys with strings.
-	 */
+	/** create cases according to part2Region (part1Region if is SINGLE_SWITCH). replace keys with strings. */
 	private static boolean prepareMergedSwitchCases(SwitchData data) {
 		SwitchRegion part2Region = data.getPart2Region();
 		List<CaseData> cases = data.getCases();
@@ -422,7 +426,7 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 		private SwitchStringType type = SwitchStringType.SWITCH_SWITCH;
 		// first switch/if region
 		private final IRegion part1Region;
-		// second switch region, null if SINGLE_SWITCH
+		// second switch region, null if type is SINGLE_SWITCH
 		private @Nullable SwitchRegion part2Region;
 		// each case is a str in part1Region, with its num or code block
 		private List<CaseData> cases;
