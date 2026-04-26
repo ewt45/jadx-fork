@@ -266,16 +266,16 @@ public class SwitchOverStringVisitor extends AbstractVisitor implements IRegionI
 			for (CaseData caseData : cases) {
 				if (lastCaseData != null && lastCaseData.getCode() == caseData.getCode()) {
 					// combine cases whose blocks are the same
-					SwitchRegion.CaseInfo lastInfo = ListUtils.last(newCases);
-					Objects.requireNonNull(lastInfo).getKeys().add(caseData.getStrValue());
+					SwitchRegion.CaseInfo lastInfo = Objects.requireNonNull(ListUtils.last(newCases));
+					lastInfo.getKeys().add(caseData.getStrValue());
 				} else {
-					List<Object> keys = new ArrayList<>();
-					keys.add(caseData.getStrValue());
 					IContainer container = RegionUtils.getBlockContainer(part1Region, caseData.getCode());
 					if (container == null) {
 						return false;
 					}
-					newCases.add(new SwitchRegion.CaseInfo(keys, container));
+					SwitchRegion.CaseInfo newInfo = new SwitchRegion.CaseInfo(new ArrayList<>(), container);
+					newInfo.getKeys().add(caseData.getStrValue());
+					newCases.add(newInfo);
 				}
 				lastCaseData = caseData;
 			}
