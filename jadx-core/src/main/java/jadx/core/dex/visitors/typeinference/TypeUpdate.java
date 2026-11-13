@@ -416,12 +416,13 @@ public final class TypeUpdate {
 			// TODO: implement backward type propagation (from result to instance)
 			return SAME;
 		}
-		if (invoke.getInstanceArg() == arg) {
+		InsnArg instanceArg = invoke.getInstanceArg();
+		TypeUtils typeUtils = root.getTypeUtils();
+		if (instanceArg == arg) {
 			IMethodDetails methodDetails = root.getMethodUtils().getMethodDetails(invoke);
 			if (methodDetails == null) {
 				return SAME;
 			}
-			TypeUtils typeUtils = root.getTypeUtils();
 			Set<ArgType> knownTypeVars = typeUtils.getKnownTypeVarsAtMethod(updateInfo.getMth());
 			Map<ArgType, ArgType> typeVarsMap = typeUtils.getTypeVariablesMapping(candidateType);
 
@@ -442,6 +443,15 @@ public final class TypeUpdate {
 			}
 			return new InvokeUpdateCallback(this, updateInfo, invoke, argsCount, knownTypeVars, getReturnType, getArgType)
 					.runQueue();
+		}
+		// TODO add callback to force cast instance arg by param arg (current arg) generic type
+		// request 传入 candidateType 是把 instanceType 的wildcard泛型改成对应 argType 的泛型就行了？
+		if (instanceArg != null) {
+			ArgType instanceType = instanceArg.getType();
+			comparator.compareTypes(instanceType, candidateType)
+		}
+		if (instanceArg != null && typeUtils.isInvokeCaptureConversionMismatch(instanceArg.getType(), candidateType)) {
+			// 返回啥啊？？
 		}
 		return SAME;
 	}

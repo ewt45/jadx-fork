@@ -4,6 +4,7 @@ import jadx.core.dex.instructions.BaseInvokeNode;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.nodes.RootNode;
+import jadx.core.dex.nodes.utils.TypeUtils;
 
 /**
  * Special dynamic bound for invoke with generics.
@@ -38,7 +39,11 @@ public final class TypeBoundInvokeUse implements ITypeBoundDynamic {
 	}
 
 	private ArgType getArgType(ArgType instanceType, ArgType argType) {
-		ArgType resultGeneric = root.getTypeUtils().replaceClassGenerics(instanceType, genericArgType);
+		TypeUtils typeUtils = root.getTypeUtils();
+		if (typeUtils.isInvokeCaptureConversionMismatch(instanceType, genericArgType)) {
+			return argType;
+		}
+		ArgType resultGeneric = typeUtils.replaceClassGenerics(instanceType, genericArgType);
 		if (resultGeneric != null) {
 			return resultGeneric;
 		}

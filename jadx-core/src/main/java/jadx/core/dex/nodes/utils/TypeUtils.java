@@ -375,4 +375,31 @@ public class TypeUtils {
 			}
 		}
 	}
+
+	/**
+	 * for a invoke insn {@code ClassA.f() }
+	 * <pre>{@code
+	 * // a class with generic type
+	 * ClassA<Type> { void f(Type t) }
+	 * // instance method call, param type is generic type
+	 * <V> void f2(V var) {
+	 *     a.f(var);
+	 * }
+	 * }</pre>
+	 * in this case, instance {@code a}'s generic type shouldn't be {@code ?} or {@code ? extends XXX}
+	 * because compile won't pass
+	 */
+	public boolean isInvokeCaptureConversionMismatch(ArgType instanceType, ArgType genericArgType) {
+		if (getClassGenerics(instanceType).contains(genericArgType)) {
+			ArgType actualType = getTypeVariablesMapping(instanceType).get(genericArgType);
+			if (actualType != null && actualType.isWildcard()) {
+				ArgType.WildcardBound bound = actualType.getWildcardBound();
+				if (bound == ArgType.WildcardBound.UNBOUND || bound == ArgType.WildcardBound.EXTENDS) {
+					// TODO: checks for SUPER
+					return true;
+				}
+			}
+		}
+		return false;
+	}
 }
